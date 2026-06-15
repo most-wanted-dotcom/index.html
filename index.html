@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>Most Wanted</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   /* ============================================================
      HIER NICHTS ÄNDERN – das Design.
@@ -78,10 +80,10 @@
   .mini{background:#1c2740;color:#7aa2f7;border:none;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;}
 
   /* Karte */
-  .map{position:relative;height:240px;margin:0 16px 8px;background:linear-gradient(135deg,#0d1117,#13181f);border-radius:10px;border:1px solid #222;overflow:hidden;}
-  .grid{position:absolute;inset:0;background-image:linear-gradient(#ffffff0a 1px,transparent 1px),linear-gradient(90deg,#ffffff0a 1px,transparent 1px);background-size:28px 28px;}
-  .pin{position:absolute;transform:translate(-50%,-50%);width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px #000a;font-size:11px;font-weight:800;color:#0a0a0b;border:2px solid #0a0a0b;}
-  .pin span{position:absolute;top:-16px;font-size:10px;font-weight:700;color:#fff;white-space:nowrap;text-shadow:0 1px 3px #000;}
+  .map{position:relative;height:280px;margin:0 16px 8px;border-radius:10px;border:1px solid #222;overflow:hidden;z-index:0;}
+  .leaflet-container{background:#0d1117;}
+  .mw-pin{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;font-size:14px;box-shadow:0 2px 8px #0008;border:2px solid #0a0a0b;}
+  .mw-label{position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:700;color:#fff;white-space:nowrap;text-shadow:0 1px 3px #000;}
   .hint{font-size:11px;color:#666;margin:0 16px 14px;line-height:1.4;}
 
   .geo{display:flex;align-items:center;gap:6px;margin:0 16px 8px;font-size:12px;color:#9bbcff;font-variant-numeric:tabular-nums;}
@@ -133,16 +135,45 @@
       <button id="rHunter">Hunter (Jagd)</button>
     </div>
   </div>
+  <button id="btnJoin" class="primary">Beitreten</button>
+  <button id="btnCreate" class="ghostlink">Neues Spiel erstellen (als Spielleiter)</button>
+</div>
+
+<!-- ============================================================
+     SPIELLEITER-KONFIGURATION (nur beim Erstellen)
+     ============================================================ -->
+<div id="config" class="login hidden">
+  <div class="logo">🎛️ <b>SPIEL EINRICHTEN</b></div>
+  <div class="sub">Stell das Spiel ein und starte, wenn alle da sind.</div>
+
   <div class="field">
-    <label>WARN-DISTANZ (nur beim Erstellen)</label>
+    <label>DEIN NAME (Spielleiter)</label>
+    <input id="cfgName" placeholder="Wie heißt du?" maxlength="24" />
+  </div>
+  <div class="field">
+    <label>GESAMTDAUER (STUNDEN)</label>
+    <input id="cfgHours" type="number" min="0.5" max="48" step="0.5" value="5" inputmode="decimal" />
+  </div>
+  <div class="field">
+    <label>VORSPRUNG FÜR TARGETS (MINUTEN)</label>
+    <input id="cfgHead" type="number" min="0" max="180" step="5" value="30" inputmode="numeric" />
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">So lange fliehen die Targets, bevor die Jagd startet.</div>
+  </div>
+  <div class="field">
+    <label>ENDSPIEL: LETZTE … MINUTEN</label>
+    <input id="cfgEnd" type="number" min="0" max="240" step="5" value="60" inputmode="numeric" />
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">In dieser Schlussphase wird der Standort alle 5 Min statt alle 15 Min übermittelt.</div>
+  </div>
+  <div class="field">
+    <label>WARN-DISTANZ</label>
     <div class="role-pick">
       <button id="d500" class="on-target">500 m</button>
       <button id="d1000">1000 m</button>
     </div>
     <div style="font-size:11px;color:#55555c;margin-top:6px;">Targets werden gewarnt, wenn ein Hunter näher kommt.</div>
   </div>
-  <button id="btnJoin" class="primary">Beitreten</button>
-  <button id="btnCreate" class="ghostlink">Neues Spiel erstellen (für Spielleiter)</button>
+  <button id="btnCreateGo" class="primary">Spiel erstellen & Lobby öffnen</button>
+  <button id="btnCfgBack" class="ghostlink">Zurück</button>
 </div>
 
 <!-- ============================================================
@@ -165,11 +196,7 @@
     <div id="phaseDesc" class="phase-desc"></div>
     <div id="timer" class="timer">00:00:00</div>
     <div id="hostTimer" class="host-timer hidden">
-      <span style="color:var(--muted);font-size:12px;">Spiel starten für:</span>
-      <button onclick="startGame(3)">3h</button>
-      <button onclick="startGame(5)">5h</button>
-      <button onclick="startGame(8)">8h</button>
-      <button onclick="startGame(24)">24h</button>
+      <button onclick="startGame()" style="padding:12px 28px;">▶ Spiel starten</button>
     </div>
   </div>
 
@@ -211,7 +238,7 @@
       <button id="btnLive" class="mini">📍 Standort teilen</button>
     </div>
     <div id="geoLine" class="geo hidden"></div>
-    <div class="map"><div class="grid"></div><div id="pins"></div></div>
+    <div id="leafletMap" class="map"></div>
     <p class="hint">Hunter sehen die Targets nur alle 15 Min (Endspiel: 5 Min). Targets sehen die Hunter nicht – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.</p>
   </div>
 
@@ -257,6 +284,7 @@ const PHASES = [
 const ROLES = {
   target:{label:"Target",color:"#f4c430",icon:"👟"},
   hunter:{label:"Hunter",color:"#ef4444",icon:"🎯"},
+  host:{label:"Spielleiter",color:"#a78bfa",icon:"🎛️"},
 };
 
 let sb=null, me=null, game=null, players=[], sightings=[];
@@ -283,7 +311,7 @@ function activePower(){
   if(!game||!game.power_kind||!game.power_until) return null;
   return new Date(game.power_until) > new Date() ? game.power_kind : null;
 }
-function isHost(){ return me && game && me.id===game.host_id; }
+function isHost(){ return me && me.role==="host"; }
 
 // Entfernung zwischen zwei GPS-Punkten in Metern (Haversine-Formel)
 function distMeters(lat1,lng1,lat2,lng2){
@@ -328,13 +356,34 @@ $("d1000").onclick=()=>{chosenDist=1000;$("d1000").className="on-target";$("d500
 
 function showErr(m){const e=$("loginErr");e.textContent=m;e.classList.remove("hidden");}
 
-$("btnCreate").onclick=async()=>{
+// "Neues Spiel erstellen" → zeigt die Konfig-Maske
+$("btnCreate").onclick=()=>{
   if(!guard())return;
-  const name=$("inName").value.trim();
-  if(!name){showErr("Bitte gib deinen Namen ein.");return;}
+  $("login").classList.add("hidden");
+  $("config").classList.remove("hidden");
+};
+$("btnCfgBack").onclick=()=>{
+  $("config").classList.add("hidden");
+  $("login").classList.remove("hidden");
+};
+
+// In der Konfig-Maske: Spiel mit allen Einstellungen anlegen, als Spielleiter beitreten
+$("btnCreateGo").onclick=async()=>{
+  if(!guard())return;
+  const name=$("cfgName").value.trim();
+  if(!name){alert("Bitte gib deinen Namen ein.");return;}
+  const hours=parseFloat($("cfgHours").value)||5;
+  const headMin=parseInt($("cfgHead").value)||0;
+  const endMin=parseInt($("cfgEnd").value)||0;
   const code=(Math.random().toString(36).slice(2,6)+Math.floor(Math.random()*90+10)).toUpperCase();
-  const {data,error}=await sb.from("games").insert({code,phase:"lobby",warn_dist:chosenDist}).select().single();
-  if(error){showErr("Fehler: "+error.message);return;}
+  const {data,error}=await sb.from("games").insert({
+    code, phase:"lobby", warn_dist:chosenDist,
+    duration_min: Math.round(hours*60),
+    headstart_min: headMin,
+    endgame_min: endMin
+  }).select().single();
+  if(error){alert("Fehler: "+error.message);return;}
+  chosenRole="host";
   await joinGame(data,name,true);
 };
 
@@ -368,8 +417,11 @@ async function joinGame(g,name,asHost){
     game.host_id=me.id;
   }
   $("login").classList.add("hidden");
+  $("config").classList.add("hidden");
   $("game").classList.remove("hidden");
   $("hCode").textContent=g.code;
+  initMap();
+  if(!mapInitDone){ let tries=0; const t=setInterval(()=>{ initMap(); if(mapInitDone||++tries>20) clearInterval(t); },200); }
   await refreshAll();
   subscribe();
   startTimer();
@@ -456,20 +508,14 @@ function render(){
   $("sCaught").textContent=targets.filter(p=>p.caught).length;
   $("sHunters").textContent=hunters.length;
 
-  // Karte – Targets sehen keine Hunter (nur andere Targets + sich selbst)
-  const visible = me.role==="hunter"
-    ? players
-    : players.filter(p=>p.role==="target");
+  // Karte – Spielleiter sieht alle (außer sich selbst); Hunter sehen Targets+Hunter;
+  // Targets sehen nur andere Targets (Hunter bleiben verborgen). Host taucht nie als Pin auf.
+  let visible;
+  if(me.role==="host")      visible = players.filter(p=>p.role!=="host");
+  else if(me.role==="hunter") visible = players.filter(p=>p.role!=="host");
+  else                      visible = players.filter(p=>p.role==="target");
   const withGeo=visible.filter(p=>p.lat!=null);
-  let minLat=90,maxLat=-90,minLng=180,maxLng=-180;
-  withGeo.forEach(p=>{minLat=Math.min(minLat,p.lat);maxLat=Math.max(maxLat,p.lat);minLng=Math.min(minLng,p.lng);maxLng=Math.max(maxLng,p.lng);});
-  const pad=0.0008; const latR=(maxLat-minLat)||pad, lngR=(maxLng-minLng)||pad;
-  $("pins").innerHTML=withGeo.map(p=>{
-    const x=withGeo.length===1?50:((p.lng-minLng)/(lngR*1.2)+ .083)*100;
-    const y=withGeo.length===1?50:(1-((p.lat-minLat)/(latR*1.2)+ .083))*100;
-    const c=p.caught?"#555":ROLES[p.role].color;
-    return `<div class="pin" style="left:${x}%;top:${y}%;background:${c}"><span>${esc(p.name)}</span>${ROLES[p.role].icon}</div>`;
-  }).join("");
+  drawMarkers(withGeo);
 
   // Spielerliste
   $("playerList").innerHTML=players.map(p=>{
@@ -487,6 +533,8 @@ function render(){
   const sel=$("tipTarget"); const cur=sel.value;
   sel.innerHTML='<option value="">Wer wurde gesehen?</option>'+targets.map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join("");
   sel.value=cur;
+  // Spielleiter muss keinen Standort teilen (schaut nur zu)
+  $("btnLive").style.display = me.role==="host" ? "none" : "";
 
   // Sichtungen
   $("tipList").innerHTML=sightings.length?sightings.map(s=>{
@@ -495,6 +543,50 @@ function render(){
   }).join(""):'<div class="empty">Noch keine Sichtungen gemeldet.</div>';
 }
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+// ---------- Leaflet-Karte (OpenStreetMap) ----------
+let lmap=null, lmarkers={}, mapInitDone=false, didAutoFit=false;
+function initMap(){
+  if(mapInitDone) return;
+  if(typeof L==="undefined") return;          // Bibliothek noch nicht geladen
+  if(!document.getElementById("leafletMap")) return;
+  lmap=L.map("leafletMap",{zoomControl:true,attributionControl:true}).setView([51.1657,10.4515],5); // Mitte Deutschland als Start
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
+    maxZoom:19, attribution:"© OpenStreetMap"
+  }).addTo(lmap);
+  mapInitDone=true;
+  setTimeout(()=>lmap.invalidateSize(),300);  // Darstellung nach Layout korrigieren
+}
+
+function drawMarkers(list){
+  if(!mapInitDone) initMap();
+  if(!lmap) return;
+  const seen={};
+  list.forEach(p=>{
+    seen[p.id]=true;
+    const color=p.caught?"#555":ROLES[p.role].color;
+    const html=`<div class="mw-pin" style="background:${color}"><span class="mw-label">${esc(p.name)}</span>${ROLES[p.role].icon}</div>`;
+    const icon=L.divIcon({html,className:"",iconSize:[28,28],iconAnchor:[14,14]});
+    if(lmarkers[p.id]){
+      lmarkers[p.id].setLatLng([p.lat,p.lng]).setIcon(icon);
+    }else{
+      lmarkers[p.id]=L.marker([p.lat,p.lng],{icon}).addTo(lmap);
+    }
+  });
+  // Marker entfernen, die nicht mehr sichtbar sind
+  Object.keys(lmarkers).forEach(id=>{
+    if(!seen[id]){ lmap.removeLayer(lmarkers[id]); delete lmarkers[id]; }
+  });
+  // Beim ersten Mal automatisch auf die Spieler zoomen
+  if(!didAutoFit && list.length){
+    didAutoFit=true;
+    if(list.length===1){ lmap.setView([list[0].lat,list[0].lng],15); }
+    else{
+      const b=L.latLngBounds(list.map(p=>[p.lat,p.lng]));
+      lmap.fitBounds(b.pad(0.3));
+    }
+  }
+}
 
 // ---------- Aktionen ----------
 window.toggleCaught=async(id,cur)=>{await sb.from("players").update({caught:!cur}).eq("id",id);};
@@ -600,23 +692,52 @@ function updatePowerBar(){
   bar.classList.remove("hidden");
 }
 
-// ---------- Timer ----------
+// ---------- Timer & automatischer Phasen-Ablauf ----------
 function startTimer(){
   clearInterval(timerInt);
   timerInt=setInterval(()=>{
-    // Timer-Steuerung nur dem Spielleiter zeigen
-    $("hostTimer").classList.toggle("hidden", !isHost());
-    if(!game.ends_at){$("timer").textContent=isHost()?"bereit":"--:--:--";return;}
+    // Steuerungs-Knopf nur dem Spielleiter zeigen, solange nicht gestartet
+    $("hostTimer").classList.toggle("hidden", !(isHost() && !game.started_at));
+    if(!game.ends_at || !game.started_at){
+      $("timer").textContent=isHost()?"bereit zum Start":"Warten auf den Start";
+      return;
+    }
     const left=Math.round((new Date(game.ends_at)-new Date())/1000);
-    $("timer").textContent=fmt(left);
+    $("timer").textContent=left>0?fmt(left):"00:00:00";
     $("timer").style.color=left<3600?"#ef4444":"#f3f3f5";
+    // Nur der Spielleiter steuert die automatischen Phasenwechsel (damit es einer macht)
+    if(isHost()) autoPhase(left);
   },1000);
 }
-// Spielleiter startet das Spiel mit einer Dauer und schaltet auf "Jagd"
-window.startGame=async(hours)=>{
+
+// Rechnet aus der Restzeit die richtige Phase aus und schaltet automatisch um
+async function autoPhase(left){
+  if(!game.started_at) return;
+  const head=(game.headstart_min||0)*60;
+  const endg=(game.endgame_min||0)*60;
+  const elapsed=(Date.now()-new Date(game.started_at))/1000;
+  let want;
+  if(left<=0) want="over";
+  else if(endg>0 && left<=endg) want="endgame";
+  else if(head>0 && elapsed<head) want="headstart";
+  else want="hunt";
+  if(want!==game.phase){
+    await sb.from("games").update({phase:want}).eq("id",game.id);
+  }
+}
+
+// Spielleiter startet das Spiel: Startzeit + Endzeit setzen, Ablauf läuft dann automatisch
+window.startGame=async()=>{
   if(!isHost())return;
-  const ends=new Date(Date.now()+hours*3600*1000).toISOString();
-  await sb.from("games").update({ends_at:ends,phase:"hunt"}).eq("id",game.id);
+  const dur=(game.duration_min||300)*60*1000;
+  const now=new Date();
+  const head=(game.headstart_min||0);
+  const firstPhase = head>0 ? "headstart" : "hunt";
+  await sb.from("games").update({
+    started_at: now.toISOString(),
+    ends_at: new Date(now.getTime()+dur).toISOString(),
+    phase: firstPhase
+  }).eq("id",game.id);
 };
 
 // ---------- Verlassen ----------
