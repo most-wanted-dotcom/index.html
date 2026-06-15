@@ -57,6 +57,15 @@
   .phase-desc{color:var(--muted);font-size:13px;margin-bottom:8px;}
   .timer{font-size:50px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;}
   .phase-row{display:flex;gap:6px;padding:6px 14px 8px;overflow-x:auto;}
+  .host-timer{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:14px;flex-wrap:wrap;}
+  .host-timer button{background:var(--gold);color:#0a0a0b;border:none;padding:8px 16px;border-radius:9px;font-weight:800;font-size:14px;}
+  .popup{margin:10px 14px 0;padding:13px 16px;border-radius:12px;background:var(--gold);color:#0a0a0b;font-weight:700;font-size:14px;animation:pop .3s ease;}
+  .popup.hunter{background:var(--red);color:#fff;}
+  .popup.target{background:#f4c430;color:#0a0a0b;}
+  @keyframes pop{from{transform:scale(.96);opacity:0;}to{transform:scale(1);opacity:1;}}
+  .power-bar{margin:10px 14px 0;padding:11px 16px;border-radius:12px;background:#10243a;color:#7aa2f7;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;border:1px solid #1e3a5c;}
+  .power-grid{display:flex;flex-direction:column;gap:8px;}
+  .power-grid button{background:#161619;color:var(--text);border:1px solid var(--line);padding:12px;border-radius:10px;font-weight:700;font-size:14px;text-align:left;}
   .phase-step{flex:1;min-width:62px;background:#141416;color:#777;border:none;padding:8px 4px;border-radius:8px;font-weight:700;font-size:11px;white-space:nowrap;}
 
   .stats{display:flex;gap:8px;padding:8px 14px;}
@@ -124,6 +133,14 @@
       <button id="rHunter">Hunter (Jagd)</button>
     </div>
   </div>
+  <div class="field">
+    <label>WARN-DISTANZ (nur beim Erstellen)</label>
+    <div class="role-pick">
+      <button id="d500" class="on-target">500 m</button>
+      <button id="d1000">1000 m</button>
+    </div>
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">Targets werden gewarnt, wenn ein Hunter näher kommt.</div>
+  </div>
   <button id="btnJoin" class="primary">Beitreten</button>
   <button id="btnCreate" class="ghostlink">Neues Spiel erstellen (für Spielleiter)</button>
 </div>
@@ -138,9 +155,22 @@
     <div class="codechip">CODE: <span id="hCode"></span></div>
   </header>
 
+  <!-- Pop-up-Banner für Durchsagen & Aktionen -->
+  <div id="popup" class="popup hidden"></div>
+
+  <!-- aktive Spezialaktion (z. B. Live-Tracking läuft) -->
+  <div id="powerBar" class="power-bar hidden"></div>
+
   <div class="timer-wrap">
     <div id="phaseDesc" class="phase-desc"></div>
     <div id="timer" class="timer">00:00:00</div>
+    <div id="hostTimer" class="host-timer hidden">
+      <span style="color:var(--muted);font-size:12px;">Spiel starten für:</span>
+      <button onclick="startGame(3)">3h</button>
+      <button onclick="startGame(5)">5h</button>
+      <button onclick="startGame(8)">8h</button>
+      <button onclick="startGame(24)">24h</button>
+    </div>
   </div>
 
   <div id="phaseRow" class="phase-row"></div>
@@ -151,15 +181,38 @@
     <div class="stat">🎯 <div><b id="sHunters">0</b> Hunter</div></div>
   </div>
 
+  <!-- Spielleiter-Steuerpult (nur Host) -->
+  <div id="hostPanel" class="card hidden" style="border-color:#3a2f0c;">
+    <div class="card-head"><span class="card-title">🎛️ Spielleiter</span></div>
+    <div style="padding:0 16px 10px;">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600;">DURCHSAGE SENDEN</div>
+      <div class="tip-row" style="padding:0 0 10px;">
+        <select id="msgTo">
+          <option value="all">An alle</option>
+          <option value="hunter">Nur Hunter</option>
+          <option value="target">Nur Targets</option>
+        </select>
+        <input id="msgText" placeholder="Nachricht…" />
+        <button class="addbtn" onclick="sendMessage()">➤</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin:4px 0 6px;font-weight:600;">SPEZIALAKTIONEN</div>
+      <div class="power-grid">
+        <button onclick="power('live')">📡 Live-Tracking 10 Min</button>
+        <button onclick="power('silence')">🔇 Funkstille 10 Min</button>
+        <button onclick="power('reveal')">🎯 Sofort aufdecken</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Karte -->
   <div class="card">
     <div class="card-head">
       <span class="card-title">🗺️ Einsatzkarte</span>
-      <button id="btnLive" class="mini">📍 Live-Standort an</button>
+      <button id="btnLive" class="mini">📍 Standort teilen</button>
     </div>
     <div id="geoLine" class="geo hidden"></div>
     <div class="map"><div class="grid"></div><div id="pins"></div></div>
-    <p class="hint">Alle teilnehmenden Spieler erscheinen live auf der Karte, sobald sie ihren Standort teilen.</p>
+    <p class="hint">Hunter sehen die Targets nur alle 15 Min (Endspiel: 5 Min). Targets sehen die Hunter nicht – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.</p>
   </div>
 
   <!-- Spieler -->
@@ -207,7 +260,56 @@ const ROLES = {
 };
 
 let sb=null, me=null, game=null, players=[], sightings=[];
-let chosenRole="target", watchId=null, timerInt=null;
+let chosenRole="target", watchId=null, timerInt=null, pingInt=null;
+let myLat=null, myLng=null;        // laufend erfasster Standort (privat)
+let lastPingAt=0;                  // wann zuletzt freigegeben wurde
+let chosenDist=500;                // gewählte Warn-Distanz beim Erstellen
+let nearState={};                  // merkt sich pro Hunter, ob er gerade "nah" ist (für einmalige Warnung)
+
+// Wie oft wird der Standort für die Hunter freigegeben? (in Sekunden)
+const PING_NORMAL = 15*60;  // 15 Minuten
+const PING_ENDGAME = 5*60;  // 5 Minuten im Endspiel
+function pingInterval(){
+  // Hunter melden häufig, damit die Annäherungs-Warnung der Targets funktioniert
+  if(me && me.role==="hunter") return 20;  // alle 20 Sekunden
+  // Aktive Spezialaktion hat Vorrang (gilt für Targets)
+  const p=activePower();
+  if(p==="live") return 5;         // Live-Tracking: praktisch durchgehend
+  if(p==="silence") return 1e9;    // Funkstille: keine Übermittlung
+  return game && game.phase==="endgame" ? PING_ENDGAME : PING_NORMAL;
+}
+// Liest die aktuell laufende Aktion aus dem Spiel (oder null)
+function activePower(){
+  if(!game||!game.power_kind||!game.power_until) return null;
+  return new Date(game.power_until) > new Date() ? game.power_kind : null;
+}
+function isHost(){ return me && game && me.id===game.host_id; }
+
+// Entfernung zwischen zwei GPS-Punkten in Metern (Haversine-Formel)
+function distMeters(lat1,lng1,lat2,lng2){
+  const R=6371000, toRad=x=>x*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLng=toRad(lng2-lng1);
+  const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
+// Prüft (nur für Targets): ist ein Hunter näher als die Warn-Distanz?
+// Warnt einmalig pro Annäherung. Reset, wenn der Hunter > 1,5x Distanz weg ist.
+function checkProximity(){
+  if(!me || me.role!=="target" || myLat==null || me.caught) return;
+  const warn=(game && game.warn_dist) ? game.warn_dist : 500;
+  const reset=warn*1.5;  // erst wieder warnen, wenn Hunter sich deutlich entfernt hat
+  players.filter(p=>p.role==="hunter" && p.lat!=null).forEach(h=>{
+    const d=distMeters(myLat,myLng,h.lat,h.lng);
+    const wasNear=nearState[h.id];
+    if(d<=warn && !wasNear){
+      nearState[h.id]=true;
+      showPopup(`⚠️ Ein Hunter ist nur noch ~${warn} m entfernt!`, "target");
+    } else if(d>reset && wasNear){
+      nearState[h.id]=false;  // wieder weit weg → nächste Annäherung kann erneut warnen
+    }
+  });
+}
 
 const $=(id)=>document.getElementById(id);
 const fmt=(s)=>{const sign=s<0?"-":"";s=Math.abs(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return sign+[h,m,x].map(n=>String(n).padStart(2,"0")).join(":");};
@@ -221,6 +323,8 @@ function configOk(){
 // ---------- Login UI ----------
 $("rTarget").onclick=()=>{chosenRole="target";$("rTarget").className="on-target";$("rHunter").className="";};
 $("rHunter").onclick=()=>{chosenRole="hunter";$("rHunter").className="on-hunter";$("rTarget").className="";};
+$("d500").onclick=()=>{chosenDist=500;$("d500").className="on-target";$("d1000").className="";};
+$("d1000").onclick=()=>{chosenDist=1000;$("d1000").className="on-target";$("d500").className="";};
 
 function showErr(m){const e=$("loginErr");e.textContent=m;e.classList.remove("hidden");}
 
@@ -229,9 +333,9 @@ $("btnCreate").onclick=async()=>{
   const name=$("inName").value.trim();
   if(!name){showErr("Bitte gib deinen Namen ein.");return;}
   const code=(Math.random().toString(36).slice(2,6)+Math.floor(Math.random()*90+10)).toUpperCase();
-  const {data,error}=await sb.from("games").insert({code,phase:"lobby"}).select().single();
+  const {data,error}=await sb.from("games").insert({code,phase:"lobby",warn_dist:chosenDist}).select().single();
   if(error){showErr("Fehler: "+error.message);return;}
-  await joinGame(data,name);
+  await joinGame(data,name,true);
 };
 
 $("btnJoin").onclick=async()=>{
@@ -252,19 +356,24 @@ function guard(){
   return true;
 }
 
-async function joinGame(g,name){
+async function joinGame(g,name,asHost){
   game=g;
   const {data,error}=await sb.from("players")
     .insert({game_id:g.id,name,role:chosenRole}).select().single();
   if(error){showErr("Beitritt fehlgeschlagen: "+error.message);return;}
   me=data;
-  localStorage.removeItem("mw"); // kein Browser-Speicher nötig; nur Laufzeit
+  // Ersteller wird als Spielleiter (host) im Spiel eingetragen
+  if(asHost){
+    await sb.from("games").update({host_id:me.id}).eq("id",g.id);
+    game.host_id=me.id;
+  }
   $("login").classList.add("hidden");
   $("game").classList.remove("hidden");
   $("hCode").textContent=g.code;
   await refreshAll();
   subscribe();
   startTimer();
+  startPingLoop();
   buildPhaseRow();
 }
 
@@ -284,18 +393,61 @@ function subscribe(){
   sb.channel("g"+game.id)
     .on("postgres_changes",{event:"*",schema:"public",table:"players",filter:"game_id=eq."+game.id},refreshAll)
     .on("postgres_changes",{event:"*",schema:"public",table:"sightings",filter:"game_id=eq."+game.id},refreshAll)
-    .on("postgres_changes",{event:"*",schema:"public",table:"games",filter:"id=eq."+game.id},refreshAll)
+    .on("postgres_changes",{event:"*",schema:"public",table:"games",filter:"id=eq."+game.id},onGameChange)
+    .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:"game_id=eq."+game.id},onMessage)
     .subscribe();
+}
+
+// Neue Durchsage empfangen → als Pop-up zeigen (wenn an mich gerichtet)
+function onMessage(payload){
+  const m=payload.new;
+  if(m.audience==="all" || m.audience===me.role){
+    showPopup(m.text, m.audience);
+  }
+}
+
+// Spiel hat sich geändert (z. B. neue Spezialaktion ausgelöst)
+let lastPowerStamp=null;
+function onGameChange(payload){
+  const g=payload.new;
+  // Wenn eine neue Aktion gestartet wurde, kurz ankündigen
+  if(g.power_until && g.power_until!==lastPowerStamp){
+    lastPowerStamp=g.power_until;
+    const names={live:"📡 LIVE-TRACKING aktiv – Standorte 10 Min durchgehend!",
+                 silence:"🔇 FUNKSTILLE – 10 Min keine Standort-Updates!",
+                 reveal:"🎯 AUFDECKUNG – alle Targets jetzt sichtbar!"};
+    if(g.power_kind && new Date(g.power_until)>new Date()){
+      showPopup(names[g.power_kind]||"Spezialaktion!", "all");
+      if(g.power_kind==="reveal" && watchId) releaseLocation();
+    }
+  }
+  refreshAll();
+}
+
+// Pop-up anzeigen (verschwindet nach 6 Sek)
+let popupTimer=null;
+function showPopup(text, audience){
+  const el=$("popup");
+  el.className="popup "+(audience==="hunter"?"hunter":audience==="target"?"target":"");
+  el.textContent="📢 "+text;
+  el.classList.remove("hidden");
+  clearTimeout(popupTimer);
+  popupTimer=setTimeout(()=>el.classList.add("hidden"), 6000);
 }
 
 // ---------- Render ----------
 function render(){
   const ph=PHASES.find(p=>p.id===game.phase)||PHASES[0];
-  $("phaseDesc").textContent=ph.desc;
+  $("phaseDesc").textContent=ph.desc + (isHost()?"  ·  du bist Spielleiter":"");
+  // Spielleiter-Steuerpult nur dem Host zeigen
+  $("hostPanel").classList.toggle("hidden", !isHost());
   document.querySelectorAll(".phase-step").forEach((b,i)=>{
     const on=PHASES[i].id===game.phase;
     b.style.background=on?PHASES[i].color:"#141416";
     b.style.color=on?"#0a0a0b":"#777";
+    // Klickbarkeit an Host-Status anpassen (falls host_id erst später ankommt)
+    if(isHost()){b.disabled=false;b.onclick=()=>setPhase(PHASES[i].id);}
+    else{b.disabled=true;b.onclick=null;}
   });
 
   const targets=players.filter(p=>p.role==="target");
@@ -304,8 +456,11 @@ function render(){
   $("sCaught").textContent=targets.filter(p=>p.caught).length;
   $("sHunters").textContent=hunters.length;
 
-  // Karte
-  const withGeo=players.filter(p=>p.lat!=null);
+  // Karte – Targets sehen keine Hunter (nur andere Targets + sich selbst)
+  const visible = me.role==="hunter"
+    ? players
+    : players.filter(p=>p.role==="target");
+  const withGeo=visible.filter(p=>p.lat!=null);
   let minLat=90,maxLat=-90,minLng=180,maxLng=-180;
   withGeo.forEach(p=>{minLat=Math.min(minLat,p.lat);maxLat=Math.max(maxLat,p.lat);minLng=Math.min(minLng,p.lng);maxLng=Math.max(maxLng,p.lng);});
   const pad=0.0008; const latR=(maxLat-minLat)||pad, lngR=(maxLng-minLng)||pad;
@@ -351,46 +506,130 @@ $("btnTip").onclick=async()=>{
   $("tipText").value="";
 };
 
-// Phasen-Buttons
+// Phasen-Buttons: nur der Spielleiter kann umschalten
 function buildPhaseRow(){
-  $("phaseRow").innerHTML=PHASES.map((p,i)=>`<button class="phase-step" onclick="setPhase('${p.id}')">${p.label}</button>`).join("");
+  $("phaseRow").innerHTML=PHASES.map((p,i)=>`<button class="phase-step"${isHost()?` onclick="setPhase('${p.id}')"`:" disabled"}>${p.label}</button>`).join("");
   render();
 }
-window.setPhase=async(id)=>{await sb.from("games").update({phase:id}).eq("id",game.id);};
+window.setPhase=async(id)=>{
+  if(!isHost())return;
+  await sb.from("games").update({phase:id}).eq("id",game.id);
+};
 
-// ---------- Live-Standort ----------
+// Spielleiter: Durchsage senden
+window.sendMessage=async()=>{
+  if(!isHost())return;
+  const text=$("msgText").value.trim();
+  const audience=$("msgTo").value;
+  if(!text)return;
+  await sb.from("messages").insert({game_id:game.id,audience,text});
+  $("msgText").value="";
+  showPopup("Durchsage gesendet ✓","");  // Bestätigung für den Host selbst
+};
+
+// Spielleiter: Spezialaktion auslösen (10 Min, außer "reveal" = sofort)
+window.power=async(kind)=>{
+  if(!isHost())return;
+  const mins = kind==="reveal" ? 0 : 10;
+  const until=new Date(Date.now()+mins*60*1000).toISOString();
+  await sb.from("games").update({power_kind:kind,power_until:until}).eq("id",game.id);
+};
+
+// ---------- Standort: laufend erfassen, aber nur im Intervall freigeben ----------
 $("btnLive").onclick=()=>{
-  if(watchId){navigator.geolocation.clearWatch(watchId);watchId=null;$("btnLive").textContent="📍 Live-Standort an";$("geoLine").classList.add("hidden");return;}
+  if(watchId){
+    navigator.geolocation.clearWatch(watchId);watchId=null;
+    $("btnLive").textContent="📍 Standort teilen";
+    $("geoLine").classList.add("hidden");
+    return;
+  }
   if(!navigator.geolocation){alert("Dieses Gerät unterstützt keine Standortbestimmung.");return;}
   $("btnLive").textContent="📍 Standort aus";
-  watchId=navigator.geolocation.watchPosition(async(pos)=>{
-    const lat=pos.coords.latitude,lng=pos.coords.longitude;
+  watchId=navigator.geolocation.watchPosition((pos)=>{
+    myLat=pos.coords.latitude; myLng=pos.coords.longitude;
     $("geoLine").classList.remove("hidden");
-    $("geoLine").innerHTML=`<span class="live">● LIVE</span> ${lat.toFixed(5)}, ${lng.toFixed(5)} <span style="color:#666">±${Math.round(pos.coords.accuracy)}m</span>`;
-    me.lat=lat;me.lng=lng;
-    await sb.from("players").update({lat,lng,updated_at:new Date().toISOString()}).eq("id",me.id);
-  },()=>{alert("Standort konnte nicht ermittelt werden. Erlaube den Zugriff in den Browser-Einstellungen.");$("btnLive").textContent="📍 Live-Standort an";watchId=null;},
-  {enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+    updateGeoLine(pos.coords.accuracy);
+  },()=>{
+    alert("Standort konnte nicht ermittelt werden. Erlaube den Zugriff in den Browser-Einstellungen.");
+    $("btnLive").textContent="📍 Standort teilen";watchId=null;
+  },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
 };
+
+function updateGeoLine(acc){
+  // Hunter sehen kein Ping-Detail, nur dass es läuft
+  if(me.role==="hunter"){
+    $("geoLine").innerHTML=`<span class="live">● aktiv</span> dein Standort wird geteilt`;
+    return;
+  }
+  const left=Math.max(0,Math.round(pingInterval()-(Date.now()/1000-lastPingAt)));
+  const accTxt=acc?` <span style="color:#666">±${Math.round(acc)}m</span>`:"";
+  $("geoLine").innerHTML=`<span class="live">● aktiv</span> nächste Übermittlung in ${fmt(left).slice(3)}${accTxt}`;
+}
+
+// Der "Ping": gibt den aktuell erfassten Standort frei (für alle sichtbar)
+async function releaseLocation(){
+  if(myLat==null) return;
+  lastPingAt=Date.now()/1000;
+  me.lat=myLat; me.lng=myLng;
+  await sb.from("players").update({lat:myLat,lng:myLng,updated_at:new Date().toISOString()}).eq("id",me.id);
+}
+
+// Loop, der im richtigen Takt (15 Min / im Endspiel 5 Min) freigibt
+function startPingLoop(){
+  clearInterval(pingInt);
+  // erste Freigabe kurz nach Beitritt, damit man überhaupt auf der Karte ist
+  setTimeout(()=>{ if(watchId) releaseLocation(); }, 4000);
+  pingInt=setInterval(()=>{
+    updatePowerBar();
+    checkProximity();
+    if(!watchId||myLat==null) return;
+    const since=Date.now()/1000-lastPingAt;
+    if(since>=pingInterval()) releaseLocation();
+    if(me.role==="target") updateGeoLine();
+  },1000);
+}
+
+// Zeigt eine laufende Spezialaktion mit Restzeit an
+function updatePowerBar(){
+  const p=activePower();
+  const bar=$("powerBar");
+  if(!p || p==="reveal"){ bar.classList.add("hidden"); return; }
+  const left=Math.max(0,Math.round((new Date(game.power_until)-new Date())/1000));
+  const label = p==="live" ? "📡 Live-Tracking läuft" : "🔇 Funkstille läuft";
+  bar.innerHTML=`${label} · noch ${fmt(left).slice(3)}`;
+  bar.classList.remove("hidden");
+}
 
 // ---------- Timer ----------
 function startTimer(){
   clearInterval(timerInt);
   timerInt=setInterval(()=>{
-    if(!game.ends_at){$("timer").textContent="--:--:--";return;}
+    // Timer-Steuerung nur dem Spielleiter zeigen
+    $("hostTimer").classList.toggle("hidden", !isHost());
+    if(!game.ends_at){$("timer").textContent=isHost()?"bereit":"--:--:--";return;}
     const left=Math.round((new Date(game.ends_at)-new Date())/1000);
     $("timer").textContent=fmt(left);
     $("timer").style.color=left<3600?"#ef4444":"#f3f3f5";
   },1000);
 }
+// Spielleiter startet das Spiel mit einer Dauer und schaltet auf "Jagd"
+window.startGame=async(hours)=>{
+  if(!isHost())return;
+  const ends=new Date(Date.now()+hours*3600*1000).toISOString();
+  await sb.from("games").update({ends_at:ends,phase:"hunt"}).eq("id",game.id);
+};
 
 // ---------- Verlassen ----------
 $("btnLeave").onclick=async()=>{
   if(!confirm("Spiel wirklich verlassen?"))return;
   if(watchId)navigator.geolocation.clearWatch(watchId);
+  clearInterval(pingInt); clearInterval(timerInt);
   if(me)await sb.from("players").delete().eq("id",me.id);
   location.reload();
 };
+
+// Standort-Button-Text passend zur Rolle
+window.addEventListener("DOMContentLoaded",()=>{ $("btnLive").textContent="📍 Standort teilen"; });
 
 // Setup-Hinweis beim Laden
 if(!configOk()){
