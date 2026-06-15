@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Most Wanted</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  /* ============================================================
+     HIER NICHTS ÄNDERN – das Design.
+     ============================================================ */
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  :root{
+    --bg:#0a0a0b; --panel:#121214; --panel2:#1a1a1d; --line:#26262b;
+    --gold:#f4c430; --red:#ef4444; --blue:#3b82f6; --green:#22c55e;
+    --amber:#f59e0b; --text:#f3f3f5; --muted:#8a8f98;
+  }
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+    max-width:520px; margin:0 auto; min-height:100vh; padding-bottom:40px;
+  }
+  input,select,button{font-family:inherit;font-size:16px;}
+  input::placeholder{color:#55555c;}
+  button{cursor:pointer;}
+  ::-webkit-scrollbar{height:6px;width:6px;}
+  ::-webkit-scrollbar-thumb{background:#333;border-radius:3px;}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;}}
+
+  .hidden{display:none!important;}
+
+  /* Login */
+  .login{padding:40px 22px;}
+  .logo{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+  .logo b{font-weight:800;letter-spacing:.16em;font-size:20px;}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:30px;}
+  .field{margin-bottom:16px;}
+  .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600;letter-spacing:.04em;}
+  .field input{width:100%;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:14px;border-radius:11px;outline:none;}
+  .role-pick{display:flex;gap:8px;}
+  .role-pick button{flex:1;background:#161619;color:#888;border:1px solid var(--line);padding:14px;border-radius:11px;font-weight:700;}
+  .role-pick button.on-target{background:var(--gold);color:#0a0a0b;border-color:var(--gold);}
+  .role-pick button.on-hunter{background:var(--red);color:#fff;border-color:var(--red);}
+  .primary{width:100%;background:var(--gold);color:#0a0a0b;border:none;padding:15px;border-radius:11px;font-weight:800;font-size:16px;margin-top:8px;letter-spacing:.03em;}
+  .primary:disabled{opacity:.4;}
+  .ghostlink{background:none;border:none;color:var(--muted);font-size:13px;width:100%;margin-top:16px;text-decoration:underline;}
+  .err{background:#3a1c1c;color:#ff9a9a;font-size:13px;padding:10px 12px;border-radius:9px;margin-bottom:14px;}
+
+  /* Header */
+  header{position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:rgba(10,10,11,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);}
+  .brand{display:flex;align-items:center;gap:8px;font-weight:800;letter-spacing:.14em;font-size:15px;}
+  .codechip{background:var(--panel2);border:1px solid var(--line);font-size:11px;color:var(--muted);padding:5px 10px;border-radius:999px;font-weight:700;letter-spacing:.08em;}
+
+  /* Timer */
+  .timer-wrap{text-align:center;padding:24px 18px 14px;}
+  .phase-desc{color:var(--muted);font-size:13px;margin-bottom:8px;}
+  .timer{font-size:50px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;}
+  .phase-row{display:flex;gap:6px;padding:6px 14px 8px;overflow-x:auto;}
+  .phase-step{flex:1;min-width:62px;background:#141416;color:#777;border:none;padding:8px 4px;border-radius:8px;font-weight:700;font-size:11px;white-space:nowrap;}
+
+  .stats{display:flex;gap:8px;padding:8px 14px;}
+  .stat{flex:1;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;}
+  .stat b{font-size:16px;}
+
+  .card{margin:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;}
+  .card-head{display:flex;justify-content:space-between;align-items:center;padding:13px 16px 9px;}
+  .card-title{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;}
+  .mini{background:#1c2740;color:#7aa2f7;border:none;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;}
+
+  /* Karte */
+  .map{position:relative;height:240px;margin:0 16px 8px;background:linear-gradient(135deg,#0d1117,#13181f);border-radius:10px;border:1px solid #222;overflow:hidden;}
+  .grid{position:absolute;inset:0;background-image:linear-gradient(#ffffff0a 1px,transparent 1px),linear-gradient(90deg,#ffffff0a 1px,transparent 1px);background-size:28px 28px;}
+  .pin{position:absolute;transform:translate(-50%,-50%);width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px #000a;font-size:11px;font-weight:800;color:#0a0a0b;border:2px solid #0a0a0b;}
+  .pin span{position:absolute;top:-16px;font-size:10px;font-weight:700;color:#fff;white-space:nowrap;text-shadow:0 1px 3px #000;}
+  .hint{font-size:11px;color:#666;margin:0 16px 14px;line-height:1.4;}
+
+  .geo{display:flex;align-items:center;gap:6px;margin:0 16px 8px;font-size:12px;color:#9bbcff;font-variant-numeric:tabular-nums;}
+  .geo .live{color:var(--green);font-weight:700;}
+
+  .row{display:flex;align-items:center;gap:8px;background:#161619;padding:8px 10px;border-radius:10px;border:1px solid #1f1f22;margin:0 16px 8px;}
+  .row .dot{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;font-weight:800;color:#0a0a0b;}
+  .row .nm{flex:1;font-size:14px;font-weight:600;}
+  .row.caught{opacity:.55;}
+  .row.caught .nm{text-decoration:line-through;}
+  .tag{font-size:10px;font-weight:700;padding:3px 7px;border-radius:6px;}
+  .catch-btn{border:none;padding:6px 10px;border-radius:7px;font-size:11px;font-weight:700;white-space:nowrap;}
+
+  .tip-row{display:flex;gap:8px;padding:0 16px 12px;flex-wrap:wrap;}
+  .tip-row select,.tip-row input{background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;outline:none;}
+  .tip-row input{flex:1;min-width:120px;}
+  .addbtn{background:var(--gold);color:#0a0a0b;border:none;width:44px;border-radius:9px;font-size:22px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+  .tip{display:flex;gap:10px;background:#161619;padding:10px 12px;border-radius:10px;border:1px solid #1f1f22;margin:0 16px 8px;}
+  .tip .meta{font-size:12px;color:#aaa;margin-bottom:2px;}
+  .empty{color:#555;font-size:13px;padding:8px 16px;text-align:center;}
+
+  .leave{background:none;border:none;color:#666;font-size:13px;width:100%;margin-top:20px;text-decoration:underline;}
+  .banner{background:#3a2a0c;color:var(--gold);font-size:12px;padding:8px 16px;text-align:center;}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     LOGIN-BILDSCHIRM
+     ============================================================ -->
+<div id="login" class="login">
+  <div class="logo">🎯 <b>MOST WANTED</b></div>
+  <div class="sub">Spielcode eingeben und der Jagd beitreten.</div>
+
+  <div id="loginErr" class="err hidden"></div>
+
+  <div class="field">
+    <label>SPIELCODE</label>
+    <input id="inCode" placeholder="z. B. JAGD42" autocapitalize="characters" maxlength="12" />
+  </div>
+  <div class="field">
+    <label>DEIN NAME</label>
+    <input id="inName" placeholder="Wie heißt du?" maxlength="24" />
+  </div>
+  <div class="field">
+    <label>DEINE ROLLE</label>
+    <div class="role-pick">
+      <button id="rTarget" class="on-target">Target (Flucht)</button>
+      <button id="rHunter">Hunter (Jagd)</button>
+    </div>
+  </div>
+  <button id="btnJoin" class="primary">Beitreten</button>
+  <button id="btnCreate" class="ghostlink">Neues Spiel erstellen (für Spielleiter)</button>
+</div>
+
+<!-- ============================================================
+     SPIEL-BILDSCHIRM
+     ============================================================ -->
+<div id="game" class="hidden">
+  <div id="connBanner" class="banner hidden">Verbinde…</div>
+  <header>
+    <div class="brand">🎯 MOST WANTED</div>
+    <div class="codechip">CODE: <span id="hCode"></span></div>
+  </header>
+
+  <div class="timer-wrap">
+    <div id="phaseDesc" class="phase-desc"></div>
+    <div id="timer" class="timer">00:00:00</div>
+  </div>
+
+  <div id="phaseRow" class="phase-row"></div>
+
+  <div class="stats">
+    <div class="stat">👟 <div><b id="sFree">0</b> auf der Flucht</div></div>
+    <div class="stat">✅ <div><b id="sCaught">0</b> geschnappt</div></div>
+    <div class="stat">🎯 <div><b id="sHunters">0</b> Hunter</div></div>
+  </div>
+
+  <!-- Karte -->
+  <div class="card">
+    <div class="card-head">
+      <span class="card-title">🗺️ Einsatzkarte</span>
+      <button id="btnLive" class="mini">📍 Live-Standort an</button>
+    </div>
+    <div id="geoLine" class="geo hidden"></div>
+    <div class="map"><div class="grid"></div><div id="pins"></div></div>
+    <p class="hint">Alle teilnehmenden Spieler erscheinen live auf der Karte, sobald sie ihren Standort teilen.</p>
+  </div>
+
+  <!-- Spieler -->
+  <div class="card">
+    <div class="card-head"><span class="card-title">👥 Spieler</span></div>
+    <div id="playerList"></div>
+  </div>
+
+  <!-- Sichtungen -->
+  <div class="card">
+    <div class="card-head"><span class="card-title">👁️ Sichtungen & Hinweise</span></div>
+    <div class="tip-row">
+      <select id="tipTarget"><option value="">Wer wurde gesehen?</option></select>
+      <input id="tipText" placeholder="z. B. „beim Bahnhof“" />
+      <button id="btnTip" class="addbtn">+</button>
+    </div>
+    <div id="tipList"></div>
+  </div>
+
+  <button id="btnLeave" class="leave">Spiel verlassen</button>
+</div>
+
+<script>
+/* ================================================================
+   ⬇️⬇️⬇️  HIER DEINE ZWEI SCHLÜSSEL EINTRAGEN  ⬇️⬇️⬇️
+   Ersetze die Texte zwischen den Anführungszeichen durch deine
+   Werte aus Teil 1 (deine Notiz).
+   ================================================================ */
+const SUPABASE_URL = "https://wlihbyqlwhhaoyagklef.supabase.co";        // z.B. https://nldowmqcbslgnwyiwulg.supabase.co
+const SUPABASE_KEY = "sb_publishable_vAiCUSYwIxYDqyeLQ5QQaw_QL_OZb_K";     // der lange Schlüssel (eyJ... oder sb_publishable_...)
+/* ================================================================
+   ⬆️⬆️⬆️  AB HIER NICHTS MEHR ÄNDERN  ⬆️⬆️⬆️
+   ================================================================ */
+
+const PHASES = [
+  {id:"lobby",     label:"Lobby",     color:"#8a8f98", desc:"Warten auf den Start"},
+  {id:"headstart", label:"Vorsprung", color:"#3b82f6", desc:"Targets fliehen – Hunter warten"},
+  {id:"hunt",      label:"Jagd",      color:"#ef4444", desc:"Die Hunter sind unterwegs!"},
+  {id:"endgame",   label:"Endspiel",  color:"#f59e0b", desc:"Letzte Stunde – alles oder nichts"},
+  {id:"over",      label:"Vorbei",    color:"#22c55e", desc:"Spiel beendet"},
+];
+const ROLES = {
+  target:{label:"Target",color:"#f4c430",icon:"👟"},
+  hunter:{label:"Hunter",color:"#ef4444",icon:"🎯"},
+};
+
+let sb=null, me=null, game=null, players=[], sightings=[];
+let chosenRole="target", watchId=null, timerInt=null;
+
+const $=(id)=>document.getElementById(id);
+const fmt=(s)=>{const sign=s<0?"-":"";s=Math.abs(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return sign+[h,m,x].map(n=>String(n).padStart(2,"0")).join(":");};
+const uid=()=>Math.random().toString(36).slice(2,9);
+
+// ---------- Setup-Check ----------
+function configOk(){
+  return SUPABASE_URL.startsWith("http") && !SUPABASE_KEY.startsWith("HIER_");
+}
+
+// ---------- Login UI ----------
+$("rTarget").onclick=()=>{chosenRole="target";$("rTarget").className="on-target";$("rHunter").className="";};
+$("rHunter").onclick=()=>{chosenRole="hunter";$("rHunter").className="on-hunter";$("rTarget").className="";};
+
+function showErr(m){const e=$("loginErr");e.textContent=m;e.classList.remove("hidden");}
+
+$("btnCreate").onclick=async()=>{
+  if(!guard())return;
+  const name=$("inName").value.trim();
+  if(!name){showErr("Bitte gib deinen Namen ein.");return;}
+  const code=(Math.random().toString(36).slice(2,6)+Math.floor(Math.random()*90+10)).toUpperCase();
+  const {data,error}=await sb.from("games").insert({code,phase:"lobby"}).select().single();
+  if(error){showErr("Fehler: "+error.message);return;}
+  await joinGame(data,name);
+};
+
+$("btnJoin").onclick=async()=>{
+  if(!guard())return;
+  const code=$("inCode").value.trim().toUpperCase();
+  const name=$("inName").value.trim();
+  if(!code){showErr("Bitte gib den Spielcode ein.");return;}
+  if(!name){showErr("Bitte gib deinen Namen ein.");return;}
+  const {data,error}=await sb.from("games").select().eq("code",code).maybeSingle();
+  if(error){showErr("Fehler: "+error.message);return;}
+  if(!data){showErr("Kein Spiel mit diesem Code gefunden.");return;}
+  await joinGame(data,name);
+};
+
+function guard(){
+  if(!configOk()){showErr("Die App ist noch nicht eingerichtet: Trage oben im Code deine zwei Schlüssel ein.");return false;}
+  if(!sb)sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+  return true;
+}
+
+async function joinGame(g,name){
+  game=g;
+  const {data,error}=await sb.from("players")
+    .insert({game_id:g.id,name,role:chosenRole}).select().single();
+  if(error){showErr("Beitritt fehlgeschlagen: "+error.message);return;}
+  me=data;
+  localStorage.removeItem("mw"); // kein Browser-Speicher nötig; nur Laufzeit
+  $("login").classList.add("hidden");
+  $("game").classList.remove("hidden");
+  $("hCode").textContent=g.code;
+  await refreshAll();
+  subscribe();
+  startTimer();
+  buildPhaseRow();
+}
+
+// ---------- Daten laden ----------
+async function refreshAll(){
+  const [{data:g},{data:pl},{data:si}]=await Promise.all([
+    sb.from("games").select().eq("id",game.id).single(),
+    sb.from("players").select().eq("game_id",game.id).order("created_at"),
+    sb.from("sightings").select().eq("game_id",game.id).order("created_at",{ascending:false}),
+  ]);
+  if(g)game=g; players=pl||[]; sightings=si||[];
+  render();
+}
+
+// ---------- Echtzeit ----------
+function subscribe(){
+  sb.channel("g"+game.id)
+    .on("postgres_changes",{event:"*",schema:"public",table:"players",filter:"game_id=eq."+game.id},refreshAll)
+    .on("postgres_changes",{event:"*",schema:"public",table:"sightings",filter:"game_id=eq."+game.id},refreshAll)
+    .on("postgres_changes",{event:"*",schema:"public",table:"games",filter:"id=eq."+game.id},refreshAll)
+    .subscribe();
+}
+
+// ---------- Render ----------
+function render(){
+  const ph=PHASES.find(p=>p.id===game.phase)||PHASES[0];
+  $("phaseDesc").textContent=ph.desc;
+  document.querySelectorAll(".phase-step").forEach((b,i)=>{
+    const on=PHASES[i].id===game.phase;
+    b.style.background=on?PHASES[i].color:"#141416";
+    b.style.color=on?"#0a0a0b":"#777";
+  });
+
+  const targets=players.filter(p=>p.role==="target");
+  const hunters=players.filter(p=>p.role==="hunter");
+  $("sFree").textContent=targets.filter(p=>!p.caught).length;
+  $("sCaught").textContent=targets.filter(p=>p.caught).length;
+  $("sHunters").textContent=hunters.length;
+
+  // Karte
+  const withGeo=players.filter(p=>p.lat!=null);
+  let minLat=90,maxLat=-90,minLng=180,maxLng=-180;
+  withGeo.forEach(p=>{minLat=Math.min(minLat,p.lat);maxLat=Math.max(maxLat,p.lat);minLng=Math.min(minLng,p.lng);maxLng=Math.max(maxLng,p.lng);});
+  const pad=0.0008; const latR=(maxLat-minLat)||pad, lngR=(maxLng-minLng)||pad;
+  $("pins").innerHTML=withGeo.map(p=>{
+    const x=withGeo.length===1?50:((p.lng-minLng)/(lngR*1.2)+ .083)*100;
+    const y=withGeo.length===1?50:(1-((p.lat-minLat)/(latR*1.2)+ .083))*100;
+    const c=p.caught?"#555":ROLES[p.role].color;
+    return `<div class="pin" style="left:${x}%;top:${y}%;background:${c}"><span>${esc(p.name)}</span>${ROLES[p.role].icon}</div>`;
+  }).join("");
+
+  // Spielerliste
+  $("playerList").innerHTML=players.map(p=>{
+    const r=ROLES[p.role];
+    const canCatch=p.role==="target"&&me.role==="hunter";
+    return `<div class="row ${p.caught?"caught":""}">
+      <div class="dot" style="background:${r.color}">${r.icon}</div>
+      <span class="nm">${esc(p.name)}${p.id===me.id?" (du)":""}</span>
+      <span class="tag" style="color:${r.color};border:1px solid ${r.color}55">${r.label}</span>
+      ${canCatch?`<button class="catch-btn" style="background:${p.caught?"#1c3a24":"#3a1c1c"};color:${p.caught?"#7ee787":"#ff7b72"}" onclick="toggleCaught('${p.id}',${p.caught})">${p.caught?"Frei":"Schnappen"}</button>`:""}
+    </div>`;
+  }).join("");
+
+  // Sichtungs-Dropdown
+  const sel=$("tipTarget"); const cur=sel.value;
+  sel.innerHTML='<option value="">Wer wurde gesehen?</option>'+targets.map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join("");
+  sel.value=cur;
+
+  // Sichtungen
+  $("tipList").innerHTML=sightings.length?sightings.map(s=>{
+    const t=new Date(s.created_at).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});
+    return `<div class="tip">👁️<div><div class="meta"><b>${esc(s.target_name||"Unbekannt")}</b> · ${t}</div><div>${esc(s.text||"Sichtung gemeldet")}</div></div></div>`;
+  }).join(""):'<div class="empty">Noch keine Sichtungen gemeldet.</div>';
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+// ---------- Aktionen ----------
+window.toggleCaught=async(id,cur)=>{await sb.from("players").update({caught:!cur}).eq("id",id);};
+
+$("btnTip").onclick=async()=>{
+  const target=$("tipTarget").value, text=$("tipText").value.trim();
+  if(!target&&!text)return;
+  await sb.from("sightings").insert({game_id:game.id,target_name:target,text,lat:me.lat,lng:me.lng});
+  $("tipText").value="";
+};
+
+// Phasen-Buttons
+function buildPhaseRow(){
+  $("phaseRow").innerHTML=PHASES.map((p,i)=>`<button class="phase-step" onclick="setPhase('${p.id}')">${p.label}</button>`).join("");
+  render();
+}
+window.setPhase=async(id)=>{await sb.from("games").update({phase:id}).eq("id",game.id);};
+
+// ---------- Live-Standort ----------
+$("btnLive").onclick=()=>{
+  if(watchId){navigator.geolocation.clearWatch(watchId);watchId=null;$("btnLive").textContent="📍 Live-Standort an";$("geoLine").classList.add("hidden");return;}
+  if(!navigator.geolocation){alert("Dieses Gerät unterstützt keine Standortbestimmung.");return;}
+  $("btnLive").textContent="📍 Standort aus";
+  watchId=navigator.geolocation.watchPosition(async(pos)=>{
+    const lat=pos.coords.latitude,lng=pos.coords.longitude;
+    $("geoLine").classList.remove("hidden");
+    $("geoLine").innerHTML=`<span class="live">● LIVE</span> ${lat.toFixed(5)}, ${lng.toFixed(5)} <span style="color:#666">±${Math.round(pos.coords.accuracy)}m</span>`;
+    me.lat=lat;me.lng=lng;
+    await sb.from("players").update({lat,lng,updated_at:new Date().toISOString()}).eq("id",me.id);
+  },()=>{alert("Standort konnte nicht ermittelt werden. Erlaube den Zugriff in den Browser-Einstellungen.");$("btnLive").textContent="📍 Live-Standort an";watchId=null;},
+  {enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+};
+
+// ---------- Timer ----------
+function startTimer(){
+  clearInterval(timerInt);
+  timerInt=setInterval(()=>{
+    if(!game.ends_at){$("timer").textContent="--:--:--";return;}
+    const left=Math.round((new Date(game.ends_at)-new Date())/1000);
+    $("timer").textContent=fmt(left);
+    $("timer").style.color=left<3600?"#ef4444":"#f3f3f5";
+  },1000);
+}
+
+// ---------- Verlassen ----------
+$("btnLeave").onclick=async()=>{
+  if(!confirm("Spiel wirklich verlassen?"))return;
+  if(watchId)navigator.geolocation.clearWatch(watchId);
+  if(me)await sb.from("players").delete().eq("id",me.id);
+  location.reload();
+};
+
+// Setup-Hinweis beim Laden
+if(!configOk()){
+  $("loginErr").classList.remove("hidden");
+  $("loginErr").textContent="⚙️ Noch nicht eingerichtet: Trage im Code (ganz oben im <script>-Bereich) deine Project URL und deinen publishable key ein, dann lädt die App.";
+}
+</script>
+</body>
+</html>
