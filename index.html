@@ -92,6 +92,13 @@
   .power-bar{margin:10px 14px 0;padding:11px 16px;border-radius:12px;background:#10243a;color:#7aa2f7;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;border:1px solid #1e3a5c;}
   .power-grid{display:flex;flex-direction:column;gap:8px;}
   .power-grid button{background:#161619;color:var(--text);border:1px solid var(--line);padding:12px;border-radius:10px;font-weight:700;font-size:14px;text-align:left;}
+  .field-grid{display:flex;flex-direction:column;gap:8px;}
+  .radius-pick{display:flex;gap:6px;}
+  .radius-pick button{flex:1;background:#161619;color:#bbb;border:1px solid var(--line);padding:10px 4px;border-radius:9px;font-weight:700;font-size:13px;}
+  .radius-pick button.on{background:var(--orange);color:#1a0d00;border-color:var(--orange);}
+  .field-center{background:#10243a;color:#7aa2f7;border:1px solid #1e3a5c;padding:12px;border-radius:10px;font-weight:700;font-size:14px;}
+  .field-center.arming{background:var(--orange);color:#1a0d00;border-color:var(--orange);}
+  .field-clear{background:transparent;color:#888;border:1px solid var(--line);padding:10px;border-radius:10px;font-size:13px;}
   .phase-step{flex:1;min-width:62px;background:var(--panel2);color:#8a7d6e;border:none;padding:9px 4px;border-radius:8px;font-family:var(--display);font-weight:600;font-size:12px;letter-spacing:.03em;white-space:nowrap;text-transform:uppercase;}
 
   .stats{display:flex;gap:8px;padding:8px 14px;}
@@ -259,6 +266,22 @@
         <button onclick="power('silence')">🔇 Funkstille 10 Min</button>
         <button onclick="power('reveal')">🎯 Sofort aufdecken</button>
       </div>
+
+      <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">SPIELFELD-GRENZE</div>
+      <div class="field-grid">
+        <div class="radius-pick">
+          <button id="rad1" onclick="setRadius(1000)">1 km</button>
+          <button id="rad2" onclick="setRadius(2000)">2 km</button>
+          <button id="rad5" onclick="setRadius(5000)">5 km</button>
+          <button id="rad10" onclick="setRadius(10000)">10 km</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input id="radFree" type="number" min="0.1" step="0.1" placeholder="eigene km" style="flex:1;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:10px;border-radius:9px;" />
+          <button class="addbtn" onclick="setRadiusFree()" style="width:auto;padding:0 14px;">km</button>
+        </div>
+        <button id="btnSetCenter" onclick="armCenterPick()" class="field-center">📍 Mittelpunkt auf Karte tippen</button>
+        <button onclick="clearField()" class="field-clear">Spielfeld entfernen</button>
+      </div>
     </div>
   </div>
 
@@ -373,6 +396,47 @@ function activePower(){
 }
 function isHost(){ return me && me.role==="host"; }
 
+// ---------- Spielfeld-Grenze ----------
+let chosenRadius=2000;       // gewählter Radius in Metern (Standard 2 km)
+let centerPickArmed=false;   // wartet der Host auf einen Karten-Tipp für den Mittelpunkt?
+let outsideState=false;      // ist das Target gerade außerhalb? (für einmalige Warnung)
+
+window.setRadius=(m)=>{
+  chosenRadius=m;
+  ["rad1","rad2","rad5","rad10"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
+  const map={1000:"rad1",2000:"rad2",5000:"rad5",10000:"rad10"};
+  if(map[m]&&$(map[m])) $(map[m]).classList.add("on");
+  saveField();
+};
+// markiert den aktiven Radius-Button ohne zu speichern (für Anzeige)
+function markRadius(m){
+  ["rad1","rad2","rad5","rad10"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
+  const map={1000:"rad1",2000:"rad2",5000:"rad5",10000:"rad10"};
+  if(map[m]&&$(map[m])) $(map[m]).classList.add("on");
+}
+window.setRadiusFree=()=>{
+  const km=parseFloat($("radFree").value);
+  if(!km||km<=0){alert("Bitte eine gültige km-Zahl eingeben.");return;}
+  chosenRadius=Math.round(km*1000);
+  ["rad1","rad2","rad5","rad10"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
+  saveField();
+};
+window.armCenterPick=()=>{
+  centerPickArmed=!centerPickArmed;
+  $("btnSetCenter").classList.toggle("arming",centerPickArmed);
+  $("btnSetCenter").textContent = centerPickArmed ? "✋ Jetzt auf die Karte tippen…" : "📍 Mittelpunkt auf Karte tippen";
+};
+window.clearField=async()=>{
+  if(!isHost())return;
+  await sb.from("games").update({field_lat:null,field_lng:null,field_radius:null}).eq("id",game.id);
+};
+// speichert Mittelpunkt (falls vorhanden) + aktuellen Radius
+async function saveField(){
+  if(!isHost())return;
+  const patch={field_radius:chosenRadius};
+  await sb.from("games").update(patch).eq("id",game.id);
+}
+
 // Entfernung zwischen zwei GPS-Punkten in Metern (Haversine-Formel)
 function distMeters(lat1,lng1,lat2,lng2){
   const R=6371000, toRad=x=>x*Math.PI/180;
@@ -397,6 +461,23 @@ function checkProximity(){
       nearState[h.id]=false;  // wieder weit weg → nächste Annäherung kann erneut warnen
     }
   });
+  checkField();
+}
+
+// Prüft, ob das Target das Spielfeld verlassen hat (einmalige Warnung pro Verlassen)
+async function checkField(){
+  if(!game || game.field_lat==null || !game.field_radius) return;
+  const dist=distMeters(myLat,myLng,game.field_lat,game.field_lng);
+  const outside=dist>game.field_radius;
+  if(outside && !outsideState){
+    outsideState=true;
+    showModal("Du hast das Spielfeld verlassen! Geh zurück ins markierte Gebiet.", "🚫");
+    // Spielleiter benachrichtigen (über eine Durchsage nur an den Host wäre komplex –
+    // wir schreiben eine Sichtung, die der Host sieht)
+    await sb.from("messages").insert({game_id:game.id,audience:"host",text:`${me.name} hat das Spielfeld verlassen!`});
+  } else if(!outside && outsideState){
+    outsideState=false;  // wieder drin → kann erneut warnen
+  }
 }
 
 const $=(id)=>document.getElementById(id);
@@ -555,7 +636,11 @@ function subscribe(){
 // Neue Durchsage empfangen → als auffälliges Fenster zeigen (wenn an mich gerichtet)
 function onMessage(payload){
   const m=payload.new;
-  if(me.role==="host") return;  // Spielleiter ist der Absender, kein Fenster für ihn
+  if(me.role==="host"){
+    // Spielleiter sieht nur die an ihn gerichteten Meldungen (z. B. Feld verlassen)
+    if(m.audience==="host") showModal(m.text, "🚫");
+    return;
+  }
   if(m.audience==="all" || m.audience===me.role){
     showModal(m.text, "📢");
   }
@@ -574,7 +659,6 @@ function onGameChange(payload){
     const icons={live:"📡",silence:"🔇",reveal:"🎯"};
     if(g.power_kind && new Date(g.power_until)>new Date()){
       showModal(names[g.power_kind]||"Spezialaktion!", icons[g.power_kind]||"📢");
-      if(g.power_kind==="reveal" && watchId) releaseLocation();
     }
   }
   refreshAll();
@@ -605,6 +689,7 @@ function render(){
   $("phaseDesc").textContent=ph.desc + (isHost()?"  ·  du bist Spielleiter":"");
   // Spielleiter-Steuerpult nur dem Host zeigen
   $("hostPanel").classList.toggle("hidden", !isHost());
+  if(isHost() && game.field_radius){ chosenRadius=game.field_radius; markRadius(game.field_radius); }
   document.querySelectorAll(".phase-step").forEach((b,i)=>{
     const on=PHASES[i].id===game.phase;
     b.style.background=on?PHASES[i].color:"#1f1a14";
@@ -640,6 +725,7 @@ function render(){
     })
     .filter(Boolean);
   drawMarkers(withGeo);
+  drawField();
 
   // Spielerliste
   $("playerList").innerHTML=players.map(p=>{
@@ -678,8 +764,35 @@ function initMap(){
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
     maxZoom:19, attribution:"© OpenStreetMap"
   }).addTo(lmap);
+  // Spielleiter kann den Spielfeld-Mittelpunkt auf die Karte tippen
+  lmap.on("click", async (e)=>{
+    if(!isHost() || !centerPickArmed) return;
+    centerPickArmed=false;
+    $("btnSetCenter").classList.remove("arming");
+    $("btnSetCenter").textContent="📍 Mittelpunkt auf Karte tippen";
+    await sb.from("games").update({
+      field_lat:e.latlng.lat, field_lng:e.latlng.lng, field_radius:chosenRadius
+    }).eq("id",game.id);
+  });
   mapInitDone=true;
   setTimeout(()=>lmap.invalidateSize(),300);  // Darstellung nach Layout korrigieren
+}
+
+// Zeichnet den Spielfeld-Kreis auf die Karte (für alle sichtbar)
+let fieldCircle=null;
+function drawField(){
+  if(!lmap) return;
+  if(game && game.field_lat!=null && game.field_radius){
+    if(fieldCircle){
+      fieldCircle.setLatLng([game.field_lat,game.field_lng]).setRadius(game.field_radius);
+    }else{
+      fieldCircle=L.circle([game.field_lat,game.field_lng],{
+        radius:game.field_radius, color:"#ff6a00", weight:2, fillColor:"#ff6a00", fillOpacity:0.08
+      }).addTo(lmap);
+    }
+  }else if(fieldCircle){
+    lmap.removeLayer(fieldCircle); fieldCircle=null;
+  }
 }
 
 function drawMarkers(list){
@@ -746,8 +859,19 @@ window.sendMessage=async()=>{
 // Spielleiter: Spezialaktion auslösen (10 Min, außer "reveal" = sofort)
 window.power=async(kind)=>{
   if(!isHost())return;
-  const mins = kind==="reveal" ? 0 : 10;
-  const until=new Date(Date.now()+mins*60*1000).toISOString();
+  if(kind==="reveal"){
+    // Sofort aufdecken: aktuellste Live-Position jedes Targets als freigegebene Position setzen.
+    // Das macht der Spielleiter zentral – unabhängig von den Target-Geräten.
+    await refreshAll();  // erst frische Live-Positionen holen
+    const targets=players.filter(p=>p.role==="target" && p.live_lat!=null);
+    await Promise.all(targets.map(t=>
+      sb.from("players").update({lat:t.live_lat,lng:t.live_lng}).eq("id",t.id)
+    ));
+    // Kurzes Aufdeck-Signal ins Spiel schreiben (für die Ankündigung)
+    await sb.from("games").update({power_kind:"reveal",power_until:new Date(Date.now()+8000).toISOString()}).eq("id",game.id);
+    return;
+  }
+  const until=new Date(Date.now()+10*60*1000).toISOString();
   await sb.from("games").update({power_kind:kind,power_until:until}).eq("id",game.id);
 };
 
