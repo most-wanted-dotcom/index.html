@@ -68,6 +68,8 @@
   /* Timer */
   .timer-wrap{text-align:center;padding:24px 18px 14px;}
   .phase-desc{color:var(--muted);font-size:13px;margin-bottom:8px;}
+  .ping-label{color:var(--orange-bright);font-family:var(--display);font-weight:600;font-size:13px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px;}
+  .total-time{color:var(--muted);font-family:var(--mono);font-size:13px;margin-top:8px;}
   .timer{font-family:var(--mono);font-size:54px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;letter-spacing:-.02em;}
   .phase-row{display:flex;gap:6px;padding:6px 14px 8px;overflow-x:auto;}
   .host-timer{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:14px;flex-wrap:wrap;}
@@ -76,6 +78,17 @@
   .popup.hunter{background:var(--red);color:#fff;}
   .popup.target{background:#f4c430;color:#0a0a0b;}
   @keyframes pop{from{transform:scale(.96);opacity:0;}to{transform:scale(1);opacity:1;}}
+
+  /* Auffälliges Melde-Fenster */
+  .modal{position:fixed;inset:0;z-index:1000;background:rgba(10,5,0,.78);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:24px;animation:fade .2s ease;}
+  @keyframes fade{from{opacity:0;}to{opacity:1;}}
+  .modal-box{position:relative;width:100%;max-width:380px;background:linear-gradient(180deg,#2a0a06,#1a0805);border:2px solid var(--red);border-radius:18px;padding:30px 24px 22px;text-align:center;box-shadow:0 0 40px rgba(255,59,48,.45);animation:popbig .25s ease;}
+  @keyframes popbig{from{transform:scale(.9);opacity:0;}to{transform:scale(1);opacity:1;}}
+  .modal-x{position:absolute;top:12px;right:14px;background:rgba(255,255,255,.1);color:#fff;border:none;width:34px;height:34px;border-radius:50%;font-size:16px;font-weight:700;line-height:1;}
+  .modal-icon{font-size:46px;margin-bottom:10px;}
+  .modal-text{font-family:var(--display);font-weight:600;font-size:21px;color:#fff;line-height:1.25;letter-spacing:.02em;margin-bottom:20px;}
+  .modal-ok{background:var(--red);color:#fff;border:none;width:100%;padding:14px;border-radius:11px;font-family:var(--display);font-weight:700;font-size:16px;letter-spacing:.04em;text-transform:uppercase;}
+
   .power-bar{margin:10px 14px 0;padding:11px 16px;border-radius:12px;background:#10243a;color:#7aa2f7;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;border:1px solid #1e3a5c;}
   .power-grid{display:flex;flex-direction:column;gap:8px;}
   .power-grid button{background:#161619;color:var(--text);border:1px solid var(--line);padding:12px;border-radius:10px;font-weight:700;font-size:14px;text-align:left;}
@@ -176,9 +189,9 @@
     <div style="font-size:11px;color:#55555c;margin-top:6px;">So lange fliehen die Targets, bevor die Jagd startet.</div>
   </div>
   <div class="field">
-    <label>ENDSPIEL: LETZTE … MINUTEN</label>
-    <input id="cfgEnd" type="number" min="0" max="240" step="5" value="60" inputmode="numeric" />
-    <div style="font-size:11px;color:#55555c;margin-top:6px;">In dieser Schlussphase wird der Standort alle 5 Min statt alle 15 Min übermittelt.</div>
+    <label>FINALE-DAUER (MINUTEN)</label>
+    <input id="cfgEnd" type="number" min="0" max="240" step="5" value="15" inputmode="numeric" />
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">So lange dauert das Finale am Ende. In dieser Zeit wird der Standort alle 5 Min statt alle 15 Min übermittelt. Beispiel: 15 = die letzten 15 Minuten sind das Finale.</div>
   </div>
   <div class="field">
     <label>WARN-DISTANZ</label>
@@ -202,7 +215,7 @@
     <div class="codechip">CODE: <span id="hCode"></span></div>
   </header>
 
-  <!-- Pop-up-Banner für Durchsagen & Aktionen -->
+  <!-- kleines Banner (Bestätigungen) -->
   <div id="popup" class="popup hidden"></div>
 
   <!-- aktive Spezialaktion (z. B. Live-Tracking läuft) -->
@@ -210,7 +223,9 @@
 
   <div class="timer-wrap">
     <div id="phaseDesc" class="phase-desc"></div>
-    <div id="timer" class="timer">00:00:00</div>
+    <div id="pingLabel" class="ping-label">Nächster Standort an Hunter</div>
+    <div id="timer" class="timer">--:--</div>
+    <div id="totalTime" class="total-time"></div>
     <div id="hostTimer" class="host-timer hidden">
       <button onclick="startGame()" style="padding:12px 28px;">▶ Spiel starten</button>
     </div>
@@ -278,6 +293,16 @@
   <button id="btnLeave" class="leave">Spiel verlassen</button>
 </div>
 
+<!-- Auffälliges Melde-Fenster (Annäherung & Durchsagen) -->
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <button class="modal-x" onclick="closeModal()" aria-label="Schließen">✕</button>
+    <div id="modalIcon" class="modal-icon">⚠️</div>
+    <div id="modalText" class="modal-text"></div>
+    <button class="modal-ok" onclick="closeModal()">Verstanden</button>
+  </div>
+</div>
+
 <script>
 /* ================================================================
    ⬇️⬇️⬇️  HIER DEINE ZWEI SCHLÜSSEL EINTRAGEN  ⬇️⬇️⬇️
@@ -312,22 +337,22 @@ const ROLES = {
 };
 
 let sb=null, me=null, game=null, players=[], sightings=[];
-let chosenRole="target", watchId=null, timerInt=null, pingInt=null;
+let chosenRole="target", watchId=null, timerInt=null, pingInt=null, liveInt=null;
 let myLat=null, myLng=null;        // laufend erfasster Standort (privat)
-let lastPingAt=0;                  // wann zuletzt freigegeben wurde
+let lastPingAt=0;                  // wann zuletzt für die Hunter freigegeben wurde
+let lastLiveAt=0;                  // wann zuletzt live an den Spielleiter gesendet wurde
 let chosenDist=500;                // gewählte Warn-Distanz beim Erstellen
 let nearState={};                  // merkt sich pro Hunter, ob er gerade "nah" ist (für einmalige Warnung)
+let geoActivated=false;            // einmal aktiviert → bleibt an
 
-// Wie oft wird der Standort für die Hunter freigegeben? (in Sekunden)
-const PING_NORMAL = 15*60;  // 15 Minuten
+// LIVE: alle 20 Sek an den Spielleiter. FREIGABE für Hunter: alle 15 Min (Finale 5 Min).
+const LIVE_EVERY = 20;      // Sekunden – Live-Update an den Spielleiter
+const PING_NORMAL = 15*60;  // 15 Minuten – Freigabe an die Hunter
 const PING_ENDGAME = 5*60;  // 5 Minuten im Endspiel
 function pingInterval(){
-  // Hunter melden häufig, damit die Annäherungs-Warnung der Targets funktioniert
-  if(me && me.role==="hunter") return 20;  // alle 20 Sekunden
-  // Aktive Spezialaktion hat Vorrang (gilt für Targets)
   const p=activePower();
   if(p==="live") return 5;         // Live-Tracking: praktisch durchgehend
-  if(p==="silence") return 1e9;    // Funkstille: keine Übermittlung
+  if(p==="silence") return 1e9;    // Funkstille: keine Freigabe
   return game && game.phase==="endgame" ? PING_ENDGAME : PING_NORMAL;
 }
 // Liest die aktuell laufende Aktion aus dem Spiel (oder null)
@@ -351,12 +376,12 @@ function checkProximity(){
   if(!me || me.role!=="target" || myLat==null || me.caught) return;
   const warn=(game && game.warn_dist) ? game.warn_dist : 500;
   const reset=warn*1.5;  // erst wieder warnen, wenn Hunter sich deutlich entfernt hat
-  players.filter(p=>p.role==="hunter" && p.lat!=null).forEach(h=>{
-    const d=distMeters(myLat,myLng,h.lat,h.lng);
+  players.filter(p=>p.role==="hunter" && p.live_lat!=null).forEach(h=>{
+    const d=distMeters(myLat,myLng,h.live_lat,h.live_lng);
     const wasNear=nearState[h.id];
     if(d<=warn && !wasNear){
       nearState[h.id]=true;
-      showPopup(`⚠️ Ein Hunter ist nur noch ~${warn} m entfernt!`, "target");
+      showModal(`Ein Hunter ist nur noch ~${warn} m entfernt!`, "⚠️");
     } else if(d>reset && wasNear){
       nearState[h.id]=false;  // wieder weit weg → nächste Annäherung kann erneut warnen
     }
@@ -506,11 +531,12 @@ function subscribe(){
     .subscribe();
 }
 
-// Neue Durchsage empfangen → als Pop-up zeigen (wenn an mich gerichtet)
+// Neue Durchsage empfangen → als auffälliges Fenster zeigen (wenn an mich gerichtet)
 function onMessage(payload){
   const m=payload.new;
+  if(me.role==="host") return;  // Spielleiter ist der Absender, kein Fenster für ihn
   if(m.audience==="all" || m.audience===me.role){
-    showPopup(m.text, m.audience);
+    showModal(m.text, "📢");
   }
 }
 
@@ -518,21 +544,22 @@ function onMessage(payload){
 let lastPowerStamp=null;
 function onGameChange(payload){
   const g=payload.new;
-  // Wenn eine neue Aktion gestartet wurde, kurz ankündigen
+  // Wenn eine neue Aktion gestartet wurde, ankündigen
   if(g.power_until && g.power_until!==lastPowerStamp){
     lastPowerStamp=g.power_until;
-    const names={live:"📡 LIVE-TRACKING aktiv – Standorte 10 Min durchgehend!",
-                 silence:"🔇 FUNKSTILLE – 10 Min keine Standort-Updates!",
-                 reveal:"🎯 AUFDECKUNG – alle Targets jetzt sichtbar!"};
+    const names={live:"LIVE-TRACKING aktiv – Standorte 10 Min durchgehend!",
+                 silence:"FUNKSTILLE – 10 Min keine Standort-Updates!",
+                 reveal:"AUFDECKUNG – alle Targets jetzt sichtbar!"};
+    const icons={live:"📡",silence:"🔇",reveal:"🎯"};
     if(g.power_kind && new Date(g.power_until)>new Date()){
-      showPopup(names[g.power_kind]||"Spezialaktion!", "all");
+      showModal(names[g.power_kind]||"Spezialaktion!", icons[g.power_kind]||"📢");
       if(g.power_kind==="reveal" && watchId) releaseLocation();
     }
   }
   refreshAll();
 }
 
-// Pop-up anzeigen (verschwindet nach 6 Sek)
+// Kleines Banner – nur für kurze Bestätigungen (z. B. "Durchsage gesendet")
 let popupTimer=null;
 function showPopup(text, audience){
   const el=$("popup");
@@ -542,6 +569,14 @@ function showPopup(text, audience){
   clearTimeout(popupTimer);
   popupTimer=setTimeout(()=>el.classList.add("hidden"), 6000);
 }
+
+// Auffälliges Melde-Fenster – bleibt offen, bis es geschlossen wird
+function showModal(text, icon){
+  $("modalText").textContent=text;
+  $("modalIcon").textContent=icon||"📢";
+  $("modal").classList.remove("hidden");
+}
+window.closeModal=()=>{ $("modal").classList.add("hidden"); };
 
 // ---------- Render ----------
 function render(){
@@ -564,13 +599,21 @@ function render(){
   $("sCaught").textContent=targets.filter(p=>p.caught).length;
   $("sHunters").textContent=hunters.length;
 
-  // Karte – Spielleiter sieht alle (außer sich selbst); Hunter sehen Targets+Hunter;
-  // Targets sehen nur andere Targets (Hunter bleiben verborgen). Host taucht nie als Pin auf.
+  // Karte – Spielleiter sieht alle LIVE (alle 20 Sek aktuell); Hunter sehen Targets+Hunter
+  // nur zum letzten Freigabe-Zeitpunkt; Targets sehen nur Targets (Hunter verborgen).
   let visible;
-  if(me.role==="host")      visible = players.filter(p=>p.role!=="host");
+  if(me.role==="host")        visible = players.filter(p=>p.role!=="host");
   else if(me.role==="hunter") visible = players.filter(p=>p.role!=="host");
-  else                      visible = players.filter(p=>p.role==="target");
-  const withGeo=visible.filter(p=>p.lat!=null);
+  else                        visible = players.filter(p=>p.role==="target");
+  // Host: Live-Koordinate verwenden; alle anderen: freigegebene Koordinate
+  const useLive = me.role==="host";
+  const withGeo = visible
+    .map(p=>{
+      const lat = useLive ? p.live_lat : p.lat;
+      const lng = useLive ? p.live_lng : p.lng;
+      return (lat!=null) ? {...p, lat, lng} : null;
+    })
+    .filter(Boolean);
   drawMarkers(withGeo);
 
   // Spielerliste
@@ -683,57 +726,65 @@ window.power=async(kind)=>{
   await sb.from("games").update({power_kind:kind,power_until:until}).eq("id",game.id);
 };
 
-// ---------- Standort: laufend erfassen, aber nur im Intervall freigeben ----------
+// ---------- Standort: einmal aktiviert, bleibt an ----------
 $("btnLive").onclick=()=>{
-  if(watchId){
-    navigator.geolocation.clearWatch(watchId);watchId=null;
-    $("btnLive").textContent="📍 Standort teilen";
-    $("geoLine").classList.add("hidden");
-    return;
-  }
+  if(geoActivated) return;  // bereits aktiv – kann nicht mehr ausgeschaltet werden
   if(!navigator.geolocation){alert("Dieses Gerät unterstützt keine Standortbestimmung.");return;}
-  $("btnLive").textContent="📍 Standort aus";
   watchId=navigator.geolocation.watchPosition((pos)=>{
     myLat=pos.coords.latitude; myLng=pos.coords.longitude;
+    if(!geoActivated){
+      geoActivated=true;
+      $("btnLive").textContent="📍 Standort aktiv";
+      $("btnLive").disabled=true;
+      $("btnLive").style.opacity=".6";
+    }
     $("geoLine").classList.remove("hidden");
     updateGeoLine(pos.coords.accuracy);
+    // sofort einmal live senden
+    sendLive();
   },()=>{
     alert("Standort konnte nicht ermittelt werden. Erlaube den Zugriff in den Browser-Einstellungen.");
-    $("btnLive").textContent="📍 Standort teilen";watchId=null;
   },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
 };
 
 function updateGeoLine(acc){
-  // Hunter sehen kein Ping-Detail, nur dass es läuft
+  if(me.role==="host"){ $("geoLine").classList.add("hidden"); return; }
   if(me.role==="hunter"){
     $("geoLine").innerHTML=`<span class="live">● aktiv</span> dein Standort wird geteilt`;
     return;
   }
-  const left=Math.max(0,Math.round(pingInterval()-(Date.now()/1000-lastPingAt)));
   const accTxt=acc?` <span style="color:#666">±${Math.round(acc)}m</span>`:"";
-  $("geoLine").innerHTML=`<span class="live">● aktiv</span> nächste Übermittlung in ${fmt(left).slice(3)}${accTxt}`;
+  $("geoLine").innerHTML=`<span class="live">● aktiv</span> Standort wird geteilt${accTxt}`;
 }
 
-// Der "Ping": gibt den aktuell erfassten Standort frei (für alle sichtbar)
+// LIVE: aktuellen Standort an den Spielleiter senden (alle 20 Sek)
+async function sendLive(){
+  if(myLat==null) return;
+  lastLiveAt=Date.now()/1000;
+  await sb.from("players").update({live_lat:myLat,live_lng:myLng,updated_at:new Date().toISOString()}).eq("id",me.id);
+}
+
+// FREIGABE: den Standort für die Hunter freigeben (15 Min / Finale 5 Min)
 async function releaseLocation(){
   if(myLat==null) return;
   lastPingAt=Date.now()/1000;
   me.lat=myLat; me.lng=myLng;
-  await sb.from("players").update({lat:myLat,lng:myLng,updated_at:new Date().toISOString()}).eq("id",me.id);
+  await sb.from("players").update({lat:myLat,lng:myLng}).eq("id",me.id);
 }
 
-// Loop, der im richtigen Takt (15 Min / im Endspiel 5 Min) freigibt
+// Loops: live alle 20 Sek + Freigabe im 15/5-Min-Takt
 function startPingLoop(){
   clearInterval(pingInt);
-  // erste Freigabe kurz nach Beitritt, damit man überhaupt auf der Karte ist
-  setTimeout(()=>{ if(watchId) releaseLocation(); }, 4000);
+  setTimeout(()=>{ if(geoActivated) releaseLocation(); }, 4000);  // erste Freigabe
   pingInt=setInterval(()=>{
     updatePowerBar();
     checkProximity();
-    if(!watchId||myLat==null) return;
-    const since=Date.now()/1000-lastPingAt;
-    if(since>=pingInterval()) releaseLocation();
-    if(me.role==="target") updateGeoLine();
+    if(!geoActivated||myLat==null) return;
+    // alle 20 Sek live an den Spielleiter
+    if(Date.now()/1000-lastLiveAt >= LIVE_EVERY) sendLive();
+    // Freigabe an die Hunter im großen Takt
+    if(Date.now()/1000-lastPingAt >= pingInterval()) releaseLocation();
+    updateGeoLine();
   },1000);
 }
 
@@ -754,14 +805,57 @@ function startTimer(){
   timerInt=setInterval(()=>{
     // Steuerungs-Knopf nur dem Spielleiter zeigen, solange nicht gestartet
     $("hostTimer").classList.toggle("hidden", !(isHost() && !game.started_at));
+
+    // Noch nicht gestartet
     if(!game.ends_at || !game.started_at){
+      $("pingLabel").style.display="none";
+      $("totalTime").textContent="";
       $("timer").textContent=isHost()?"bereit zum Start":"Warten auf den Start";
+      $("timer").style.fontSize="26px";
       return;
     }
-    const left=Math.round((new Date(game.ends_at)-new Date())/1000);
-    $("timer").textContent=left>0?fmt(left):"00:00:00";
-    $("timer").style.color=left<3600?"var(--orange)":"var(--text)";
-    // Nur der Spielleiter steuert die automatischen Phasenwechsel (damit es einer macht)
+    $("timer").style.fontSize="";
+
+    const left=Math.round((new Date(game.ends_at)-new Date())/1000); // Gesamtzeit übrig
+
+    // Spielleiter sieht groß die Gesamt-Spielzeit (er hat ja Live-Überblick)
+    if(isHost()){
+      $("pingLabel").style.display="";
+      $("pingLabel").textContent="Spielzeit übrig";
+      $("timer").textContent=left>0?fmt(left):"00:00:00";
+      $("timer").style.color=left<3600?"var(--orange)":"var(--text)";
+      $("totalTime").textContent="Du steuerst das Spiel – Live-Standorte alle 20 Sek.";
+      autoPhase(left);
+      if(left <= -3600){ clearSession(); alert("Das Spiel ist beendet. Die Sitzung wird geschlossen."); location.reload(); }
+      return;
+    }
+
+    // GROSS: Ping-Countdown (wann der nächste Standort an die Hunter geht)
+    const interval=pingInterval();
+    let pingLeft;
+    if(interval>1e8){ // Funkstille
+      $("pingLabel").style.display="";
+      $("pingLabel").textContent="Funkstille – keine Übermittlung";
+      $("timer").textContent="🔇";
+    } else if(activePower()==="live"){
+      $("pingLabel").style.display="";
+      $("pingLabel").textContent="Live-Tracking aktiv";
+      $("timer").textContent="LIVE";
+      $("timer").style.color="var(--orange)";
+    } else {
+      pingLeft=Math.max(0,Math.round(interval-(Date.now()/1000-(lastPingAt||Date.now()/1000))));
+      // Wenn noch nie freigegeben wurde, zeige das volle Intervall
+      if(!lastPingAt) pingLeft=interval;
+      $("pingLabel").style.display="";
+      $("pingLabel").textContent = game.phase==="endgame" ? "Nächster Standort (Finale, alle 5 Min)" : "Nächster Standort an Hunter (alle 15 Min)";
+      $("timer").textContent=fmt(pingLeft).slice(3); // MM:SS
+      $("timer").style.color="var(--orange)";
+    }
+
+    // KLEIN: Gesamtspielzeit
+    $("totalTime").textContent = left>0 ? ("Spielzeit übrig: "+fmt(left)) : "Spiel beendet";
+
+    // Phasenwechsel steuert der Spielleiter
     if(isHost()) autoPhase(left);
     // 1 Stunde nach Spielende: Sitzung automatisch schließen
     if(left <= -3600){
@@ -773,6 +867,7 @@ function startTimer(){
 }
 
 // Rechnet aus der Restzeit die richtige Phase aus und schaltet automatisch um
+let phaseWriteLock=null;
 async function autoPhase(left){
   if(!game.started_at) return;
   const head=(game.headstart_min||0)*60;
@@ -783,7 +878,9 @@ async function autoPhase(left){
   else if(endg>0 && left<=endg) want="endgame";
   else if(head>0 && elapsed<head) want="headstart";
   else want="hunt";
-  if(want!==game.phase){
+  if(want!==game.phase && phaseWriteLock!==want){
+    phaseWriteLock=want;                 // verhindert mehrfaches Schreiben pro Sekunde
+    game.phase=want;                     // sofort lokal setzen, damit die Anzeige stimmt
     await sb.from("games").update({phase:want}).eq("id",game.id);
   }
 }
