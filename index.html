@@ -355,6 +355,17 @@ function pingInterval(){
   if(p==="silence") return 1e9;    // Funkstille: keine Freigabe
   return game && game.phase==="endgame" ? PING_ENDGAME : PING_NORMAL;
 }
+// Sekunden bis zum nächsten Ping – berechnet aus dem Spielstart, daher für ALLE gleich
+// und unabhängig vom Neuladen. Beruht auf game.started_at.
+function pingCountdown(){
+  const iv=pingInterval();
+  if(iv>1e8) return null;                 // Funkstille
+  if(!game || !game.started_at) return iv;
+  const elapsed=(Date.now()-new Date(game.started_at))/1000;
+  if(elapsed<0) return iv;
+  const into=elapsed % iv;                // wie weit im aktuellen Intervall
+  return Math.max(0, Math.round(iv-into));
+}
 // Liest die aktuell laufende Aktion aus dem Spiel (oder null)
 function activePower(){
   if(!game||!game.power_kind||!game.power_until) return null;
@@ -477,7 +488,7 @@ function saveSession(){
   try{ localStorage.setItem("mw_session", JSON.stringify({gameId:game.id, playerId:me.id})); }catch(e){}
 }
 function clearSession(){
-  try{ localStorage.removeItem("mw_session"); }catch(e){}
+  try{ localStorage.removeItem("mw_session"); localStorage.removeItem("mw_geo"); }catch(e){}
 }
 
 // Zeigt den Spielbildschirm und startet alle Abläufe
@@ -493,6 +504,16 @@ function enterGame(){
   startTimer();
   startPingLoop();
   buildPhaseRow();
+  // Spielleiter lädt zusätzlich regelmäßig neu, damit die Live-Standorte sicher aktuell sind
+  if(isHost()){
+    setInterval(()=>{ refreshAll(); }, 10000);
+  }
+  // Standort war schon aktiviert? Dann nach dem Neuladen automatisch wieder starten.
+  let geoWasOn=false;
+  try{ geoWasOn = localStorage.getItem("mw_geo")==="1"; }catch(e){}
+  if(geoWasOn && me.role!=="host"){
+    startGeo();
+  }
 }
 
 // Versucht beim Laden, eine gespeicherte Sitzung wiederherzustellen
@@ -729,23 +750,30 @@ window.power=async(kind)=>{
 // ---------- Standort: einmal aktiviert, bleibt an ----------
 $("btnLive").onclick=()=>{
   if(geoActivated) return;  // bereits aktiv – kann nicht mehr ausgeschaltet werden
+  startGeo();
+};
+
+// Startet die Standort-Erfassung. Merkt sich, dass der Standort aktiviert wurde,
+// damit er nach dem Neuladen automatisch wieder anspringt.
+function startGeo(){
+  if(watchId) return;  // läuft bereits
   if(!navigator.geolocation){alert("Dieses Gerät unterstützt keine Standortbestimmung.");return;}
+  try{ localStorage.setItem("mw_geo","1"); }catch(e){}  // Merker für Neuladen
+  $("btnLive").textContent="📍 Standort aktiv";
+  $("btnLive").disabled=true;
+  $("btnLive").style.opacity=".6";
   watchId=navigator.geolocation.watchPosition((pos)=>{
     myLat=pos.coords.latitude; myLng=pos.coords.longitude;
-    if(!geoActivated){
-      geoActivated=true;
-      $("btnLive").textContent="📍 Standort aktiv";
-      $("btnLive").disabled=true;
-      $("btnLive").style.opacity=".6";
-    }
+    geoActivated=true;
     $("geoLine").classList.remove("hidden");
     updateGeoLine(pos.coords.accuracy);
-    // sofort einmal live senden
-    sendLive();
+    sendLive();  // sofort einmal live senden
   },()=>{
-    alert("Standort konnte nicht ermittelt werden. Erlaube den Zugriff in den Browser-Einstellungen.");
+    // Bei Fehler/abgelehntem Zugriff: Hinweis, aber Aktivierungs-Merker bleibt
+    $("geoLine").classList.remove("hidden");
+    $("geoLine").innerHTML='<span style="color:#ff9a9a">Standortzugriff nötig – bitte im Browser erlauben.</span>';
   },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
-};
+}
 
 function updateGeoLine(acc){
   if(me.role==="host"){ $("geoLine").classList.add("hidden"); return; }
@@ -765,25 +793,33 @@ async function sendLive(){
 }
 
 // FREIGABE: den Standort für die Hunter freigeben (15 Min / Finale 5 Min)
+let lastReleaseWindow=-1;
 async function releaseLocation(){
   if(myLat==null) return;
-  lastPingAt=Date.now()/1000;
   me.lat=myLat; me.lng=myLng;
   await sb.from("players").update({lat:myLat,lng:myLng}).eq("id",me.id);
 }
 
-// Loops: live alle 20 Sek + Freigabe im 15/5-Min-Takt
+// Loops: live alle 20 Sek + Freigabe genau im DB-Takt (für alle synchron)
 function startPingLoop(){
   clearInterval(pingInt);
-  setTimeout(()=>{ if(geoActivated) releaseLocation(); }, 4000);  // erste Freigabe
+  setTimeout(()=>{ if(geoActivated) releaseLocation(); }, 4000);  // erste Freigabe nach Beitritt
   pingInt=setInterval(()=>{
     updatePowerBar();
     checkProximity();
     if(!geoActivated||myLat==null) return;
     // alle 20 Sek live an den Spielleiter
     if(Date.now()/1000-lastLiveAt >= LIVE_EVERY) sendLive();
-    // Freigabe an die Hunter im großen Takt
-    if(Date.now()/1000-lastPingAt >= pingInterval()) releaseLocation();
+    // Freigabe an die Hunter: immer wenn ein neues Ping-Fenster beginnt (Countdown ~ Intervall)
+    const iv=pingInterval();
+    if(iv<1e8 && game.started_at){
+      const elapsed=(Date.now()-new Date(game.started_at))/1000;
+      const windowIndex=Math.floor(elapsed/iv);          // welches Ping-Fenster gerade läuft
+      if(windowIndex!==lastReleaseWindow){
+        lastReleaseWindow=windowIndex;
+        releaseLocation();                                // genau zum Fensterwechsel freigeben
+      }
+    }
     updateGeoLine();
   },1000);
 }
@@ -831,9 +867,7 @@ function startTimer(){
     }
 
     // GROSS: Ping-Countdown (wann der nächste Standort an die Hunter geht)
-    const interval=pingInterval();
-    let pingLeft;
-    if(interval>1e8){ // Funkstille
+    if(activePower()==="silence"){
       $("pingLabel").style.display="";
       $("pingLabel").textContent="Funkstille – keine Übermittlung";
       $("timer").textContent="🔇";
@@ -843,9 +877,7 @@ function startTimer(){
       $("timer").textContent="LIVE";
       $("timer").style.color="var(--orange)";
     } else {
-      pingLeft=Math.max(0,Math.round(interval-(Date.now()/1000-(lastPingAt||Date.now()/1000))));
-      // Wenn noch nie freigegeben wurde, zeige das volle Intervall
-      if(!lastPingAt) pingLeft=interval;
+      const pingLeft=pingCountdown();   // aus Spielstart berechnet → überlebt Neuladen
       $("pingLabel").style.display="";
       $("pingLabel").textContent = game.phase==="endgame" ? "Nächster Standort (Finale, alle 5 Min)" : "Nächster Standort an Hunter (alle 15 Min)";
       $("timer").textContent=fmt(pingLeft).slice(3); // MM:SS
