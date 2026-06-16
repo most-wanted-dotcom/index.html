@@ -811,11 +811,13 @@ function startPingLoop(){
   pingInt=setInterval(()=>{
     updatePowerBar();
     checkProximity();
-    // Wenn Funkstille startet oder endet, Karte neu zeichnen (Punkte verschwinden/kommen zurück)
-    const silenceNow = activePower()==="silence";
-    if(silenceNow !== lastSilenceState){
-      lastSilenceState = silenceNow;
-      if(players.length) render();
+    // Funkstille-Status laufend prüfen; bei Wechsel (Start ODER Ende) Karte neu zeichnen
+    if(me && game){
+      const silenceNow = activePower()==="silence";
+      if(silenceNow !== lastSilenceState){
+        lastSilenceState = silenceNow;
+        try{ render(); }catch(e){}   // Punkte verschwinden (Start) bzw. kommen zurück (Ende)
+      }
     }
     if(!geoActivated||myLat==null) return;
     // alle 20 Sek live an den Spielleiter
