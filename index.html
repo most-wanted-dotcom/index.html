@@ -622,9 +622,13 @@ function render(){
 
   // Karte – Spielleiter sieht alle LIVE (alle 20 Sek aktuell); Hunter sehen Targets+Hunter
   // nur zum letzten Freigabe-Zeitpunkt; Targets sehen nur Targets (Hunter verborgen).
+  const silence = activePower()==="silence";
   let visible;
   if(me.role==="host")        visible = players.filter(p=>p.role!=="host");
-  else if(me.role==="hunter") visible = players.filter(p=>p.role!=="host");
+  else if(me.role==="hunter"){
+    // Bei Funkstille verschwinden die Targets komplett von der Hunter-Karte
+    visible = players.filter(p=>p.role!=="host" && !(silence && p.role==="target"));
+  }
   else                        visible = players.filter(p=>p.role==="target");
   // Host: Live-Koordinate verwenden; alle anderen: freigegebene Koordinate
   const useLive = me.role==="host";
@@ -807,6 +811,12 @@ function startPingLoop(){
   pingInt=setInterval(()=>{
     updatePowerBar();
     checkProximity();
+    // Wenn Funkstille startet oder endet, Karte neu zeichnen (Punkte verschwinden/kommen zurück)
+    const silenceNow = activePower()==="silence";
+    if(silenceNow !== lastSilenceState){
+      lastSilenceState = silenceNow;
+      if(players.length) render();
+    }
     if(!geoActivated||myLat==null) return;
     // alle 20 Sek live an den Spielleiter
     if(Date.now()/1000-lastLiveAt >= LIVE_EVERY) sendLive();
@@ -823,6 +833,7 @@ function startPingLoop(){
     updateGeoLine();
   },1000);
 }
+let lastSilenceState=false;
 
 // Zeigt eine laufende Spezialaktion mit Restzeit an
 function updatePowerBar(){
