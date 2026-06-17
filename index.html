@@ -505,19 +505,25 @@ function checkProximity(){
   checkField();
 }
 
-// Prüft, ob das Target das Spielfeld verlassen hat (einmalige Warnung pro Verlassen)
+// Prüft, ob das Target das Spielfeld verlassen hat. Warnt beim Verlassen sofort
+// und danach alle 60 Sekunden erneut, solange es draußen bleibt (Target + Spielleiter).
+let lastFieldWarn=0;
 async function checkField(){
   if(!game || game.field_lat==null || !game.field_radius) return;
   const dist=distMeters(myLat,myLng,game.field_lat,game.field_lng);
   const outside=dist>game.field_radius;
-  if(outside && !outsideState){
-    outsideState=true;
-    showModal("Du hast das Spielfeld verlassen! Geh zurück ins markierte Gebiet.", "🚫");
-    // Spielleiter benachrichtigen (über eine Durchsage nur an den Host wäre komplex –
-    // wir schreiben eine Sichtung, die der Host sieht)
-    await sb.from("messages").insert({game_id:game.id,audience:"host",text:`${me.name} hat das Spielfeld verlassen!`});
-  } else if(!outside && outsideState){
-    outsideState=false;  // wieder drin → kann erneut warnen
+  const now=Date.now();
+  if(outside){
+    // beim ersten Verlassen sofort, danach alle 60 Sek erneut
+    if(!outsideState || now-lastFieldWarn >= 60000){
+      outsideState=true;
+      lastFieldWarn=now;
+      showModal("Du hast das Spielfeld verlassen! Geh zurück ins markierte Gebiet.", "🚫");
+      await sb.from("messages").insert({game_id:game.id,audience:"host",text:`${me.name} ist außerhalb des Spielfelds!`});
+    }
+  } else if(outsideState){
+    outsideState=false;   // wieder drin → beim nächsten Verlassen sofort wieder warnen
+    lastFieldWarn=0;
   }
 }
 
