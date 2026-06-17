@@ -771,7 +771,10 @@ function onMessage(payload){
 function displayMessage(m){
   if(!m || !me) return;
   if(me.role==="host"){
-    if(m.audience==="host") showModal(m.text, "🚫");
+    if(m.audience==="host"){
+      const icon = m.text.includes("das Spiel verlassen") ? "🚪" : "🚫";
+      showModal(m.text, icon);
+    }
     return;
   }
   if(m.audience==="all" || m.audience===me.role){
@@ -1309,7 +1312,14 @@ $("btnLeave").onclick=async()=>{
   if(watchId)navigator.geolocation.clearWatch(watchId);
   clearInterval(pingInt); clearInterval(timerInt);
   clearSession();  // bewusst verlassen → Sitzung löschen
-  if(me)await sb.from("players").delete().eq("id",me.id);
+  if(me){
+    // Spielleiter informieren, dass dieser Spieler das Spiel verlässt (außer der Host selbst geht)
+    if(me.role!=="host"){
+      const rolle = me.role==="hunter" ? "Hunter" : "Target";
+      try{ await sb.from("messages").insert({game_id:game.id,audience:"host",text:`${me.name} (${rolle}) hat das Spiel verlassen.`}); }catch(e){}
+    }
+    await sb.from("players").delete().eq("id",me.id);  // aus der Spielerliste entfernen
+  }
   location.reload();
 };
 
