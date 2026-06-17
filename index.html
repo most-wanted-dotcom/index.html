@@ -99,6 +99,8 @@
   .field-center{background:#10243a;color:#7aa2f7;border:1px solid #1e3a5c;padding:12px;border-radius:10px;font-weight:700;font-size:14px;}
   .field-center.arming{background:var(--orange);color:#1a0d00;border-color:var(--orange);}
   .field-clear{background:transparent;color:#888;border:1px solid var(--line);padding:10px;border-radius:10px;font-size:13px;}
+  .joker-btn{display:block;margin:0 16px 8px;width:calc(100% - 32px);background:linear-gradient(180deg,#7c4dff,#5b2ecc);color:#fff;border:none;padding:13px;border-radius:11px;font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:.03em;box-shadow:0 4px 14px rgba(124,77,255,.4);}
+  .joker-btn:disabled{opacity:.4;background:#333;box-shadow:none;}
   .phase-step{flex:1;min-width:62px;background:var(--panel2);color:#8a7d6e;border:none;padding:9px 4px;border-radius:8px;font-family:var(--display);font-weight:600;font-size:12px;letter-spacing:.03em;white-space:nowrap;text-transform:uppercase;}
 
   .stats{display:flex;gap:8px;padding:8px 14px;}
@@ -208,6 +210,14 @@
     </div>
     <div style="font-size:11px;color:#55555c;margin-top:6px;">Targets werden gewarnt, wenn ein Hunter näher kommt.</div>
   </div>
+  <div class="field">
+    <label>FUNKSTILLE-JOKER FÜR TARGETS</label>
+    <div class="role-pick">
+      <button id="jokerOn" class="on-target">An (1 Min)</button>
+      <button id="jokerOff">Aus</button>
+    </div>
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">Jedes Target kann den Joker einmal pro Spiel selbst auslösen und ist dann 1 Minute unsichtbar.</div>
+  </div>
   <button id="btnCreateGo" class="primary">Spiel erstellen & Lobby öffnen</button>
   <button id="btnCfgBack" class="ghostlink">Zurück</button>
 </div>
@@ -293,6 +303,7 @@
     </div>
     <div id="geoLine" class="geo hidden"></div>
     <div id="leafletMap" class="map"></div>
+    <button id="jokerBtn" class="joker-btn hidden" onclick="useJoker()">🃏 Funkstille-Joker (1 Min)</button>
     <p class="hint">Hunter sehen die Targets nur alle 15 Min (Endspiel: 5 Min). Targets sehen die Hunter nicht – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.</p>
   </div>
 
@@ -365,6 +376,8 @@ let myLat=null, myLng=null;        // laufend erfasster Standort (privat)
 let lastPingAt=0;                  // wann zuletzt für die Hunter freigegeben wurde
 let lastLiveAt=0;                  // wann zuletzt live an den Spielleiter gesendet wurde
 let chosenDist=500;                // gewählte Warn-Distanz beim Erstellen
+let chosenJoker=true;              // Funkstille-Joker beim Erstellen aktiviert?
+let jokerUsed=false;               // hat dieses Target den Joker schon benutzt?
 let nearState={};                  // merkt sich pro Hunter, ob er gerade "nah" ist (für einmalige Warnung)
 let geoActivated=false;            // einmal aktiviert → bleibt an
 
@@ -494,6 +507,30 @@ $("rTarget").onclick=()=>{chosenRole="target";$("rTarget").className="on-target"
 $("rHunter").onclick=()=>{chosenRole="hunter";$("rHunter").className="on-hunter";$("rTarget").className="";};
 $("d500").onclick=()=>{chosenDist=500;$("d500").className="on-target";$("d1000").className="";};
 $("d1000").onclick=()=>{chosenDist=1000;$("d1000").className="on-target";$("d500").className="";};
+$("jokerOn").onclick=()=>{chosenJoker=true;$("jokerOn").className="on-target";$("jokerOff").className="";};
+$("jokerOff").onclick=()=>{chosenJoker=false;$("jokerOff").className="on-target";$("jokerOn").className="";};
+
+// Target löst seinen persönlichen Funkstille-Joker aus (1 Min, einmalig)
+window.useJoker=async()=>{
+  if(me.role!=="target" || jokerUsed) return;
+  if(!confirm("Funkstille-Joker jetzt einsetzen? Du bist 1 Minute unsichtbar – das geht nur einmal!")) return;
+  jokerUsed=true;
+  const until=new Date(Date.now()+60*1000).toISOString();
+  await sb.from("players").update({silent_until:until,joker_used:true}).eq("id",me.id);
+  showModal("Funkstille-Joker aktiv – du bist 1 Minute unsichtbar!", "🃏");
+  renderJoker();
+};
+function renderJoker(){
+  const btn=$("jokerBtn");
+  if(!btn) return;
+  // nur für Targets sichtbar, wenn im Spiel aktiviert
+  const show = me && me.role==="target" && game && game.joker_enabled;
+  btn.classList.toggle("hidden", !show);
+  if(show){
+    btn.disabled = jokerUsed || (me.joker_used);
+    btn.textContent = (jokerUsed||me.joker_used) ? "🃏 Joker bereits benutzt" : "🃏 Funkstille-Joker (1 Min)";
+  }
+}
 
 function showErr(m){const e=$("loginErr");e.textContent=m;e.classList.remove("hidden");}
 
@@ -523,7 +560,8 @@ $("btnCreateGo").onclick=async()=>{
     code, phase:"lobby", warn_dist:chosenDist,
     duration_min: Math.round(hours*60),
     headstart_min: headMin,
-    endgame_min: endMin
+    endgame_min: endMin,
+    joker_enabled: chosenJoker
   }).select().single();
   if(error){alert("Fehler: "+error.message);return;}
   chosenRole="host";
@@ -680,8 +718,29 @@ function showModal(text, icon){
   $("modalText").textContent=text;
   $("modalIcon").textContent=icon||"📢";
   $("modal").classList.remove("hidden");
+  alertSignal();  // Ton + Vibration, damit man es auch in der Tasche merkt
 }
 window.closeModal=()=>{ $("modal").classList.add("hidden"); };
+
+// Kurzes akustisches + haptisches Signal
+function alertSignal(){
+  // Vibration (sofern das Gerät es unterstützt)
+  try{ if(navigator.vibrate) navigator.vibrate([200,100,200]); }catch(e){}
+  // Ton per Web Audio (kein Audiofile nötig)
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    if(!Ctx) return;
+    const ctx=new Ctx();
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type="square"; o.frequency.value=880;
+    g.gain.setValueAtTime(0.0001,ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.25,ctx.currentTime+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.45);
+    o.start(); o.stop(ctx.currentTime+0.5);
+    o.onended=()=>{ try{ctx.close();}catch(e){} };
+  }catch(e){}
+}
 
 // ---------- Render ----------
 function render(){
@@ -708,11 +767,12 @@ function render(){
   // Karte – Spielleiter sieht alle LIVE (alle 20 Sek aktuell); Hunter sehen Targets+Hunter
   // nur zum letzten Freigabe-Zeitpunkt; Targets sehen nur Targets (Hunter verborgen).
   const silence = activePower()==="silence";
+  const personalSilent = (p)=> p.silent_until && new Date(p.silent_until)>new Date();
   let visible;
   if(me.role==="host")        visible = players.filter(p=>p.role!=="host");
   else if(me.role==="hunter"){
-    // Bei Funkstille verschwinden die Targets komplett von der Hunter-Karte
-    visible = players.filter(p=>p.role!=="host" && !(silence && p.role==="target"));
+    // Bei (globaler) Funkstille ODER aktivem Joker verschwinden Targets von der Hunter-Karte
+    visible = players.filter(p=>p.role!=="host" && !((silence||personalSilent(p)) && p.role==="target"));
   }
   else                        visible = players.filter(p=>p.role==="target");
   // Host: Live-Koordinate verwenden; alle anderen: freigegebene Koordinate
@@ -745,6 +805,7 @@ function render(){
   sel.value=cur;
   // Spielleiter muss keinen Standort teilen (schaut nur zu)
   $("btnLive").style.display = me.role==="host" ? "none" : "";
+  renderJoker();
 
   // Sichtungen
   $("tipList").innerHTML=sightings.length?sightings.map(s=>{
@@ -924,6 +985,8 @@ async function sendLive(){
 let lastReleaseWindow=-1;
 async function releaseLocation(){
   if(myLat==null) return;
+  // Persönlicher Funkstille-Joker aktiv? Dann keine Freigabe an die Hunter.
+  if(me.silent_until && new Date(me.silent_until)>new Date()) return;
   me.lat=myLat; me.lng=myLng;
   await sb.from("players").update({lat:myLat,lng:myLng}).eq("id",me.id);
 }
