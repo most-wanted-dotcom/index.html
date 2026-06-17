@@ -299,10 +299,9 @@
       <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">SPIELFELD-GRENZE</div>
       <div class="field-grid">
         <div class="radius-pick">
-          <button id="rad1" onclick="setRadius(1000)">1 km</button>
-          <button id="rad2" onclick="setRadius(2000)">2 km</button>
-          <button id="rad5" onclick="setRadius(5000)">5 km</button>
-          <button id="rad10" onclick="setRadius(10000)">10 km</button>
+          <button id="rad1" onclick="setRadius(500)">0,5 km</button>
+          <button id="rad2" onclick="setRadius(1000)">1 km</button>
+          <button id="rad5" onclick="setRadius(2500)">2,5 km</button>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
           <input id="radFree" type="number" min="0.1" step="0.1" placeholder="eigene km" style="flex:1;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:10px;border-radius:9px;" />
@@ -449,28 +448,28 @@ function activePower(){
 function isHost(){ return me && me.role==="host"; }
 
 // ---------- Spielfeld-Grenze ----------
-let chosenRadius=2000;       // gewählter Radius in Metern (Standard 2 km)
+let chosenRadius=1000;       // gewählter Radius in Metern (Standard 1 km)
 let centerPickArmed=false;   // wartet der Host auf einen Karten-Tipp für den Mittelpunkt?
 let outsideState=false;      // ist das Target gerade außerhalb? (für einmalige Warnung)
 
 window.setRadius=(m)=>{
   chosenRadius=m;
-  ["rad1","rad2","rad5","rad10"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
-  const map={1000:"rad1",2000:"rad2",5000:"rad5",10000:"rad10"};
+  ["rad1","rad2","rad5"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
+  const map={500:"rad1",1000:"rad2",2500:"rad5"};
   if(map[m]&&$(map[m])) $(map[m]).classList.add("on");
   saveField();
 };
 // markiert den aktiven Radius-Button ohne zu speichern (für Anzeige)
 function markRadius(m){
-  ["rad1","rad2","rad5","rad10"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
-  const map={1000:"rad1",2000:"rad2",5000:"rad5",10000:"rad10"};
+  ["rad1","rad2","rad5"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
+  const map={500:"rad1",1000:"rad2",2500:"rad5"};
   if(map[m]&&$(map[m])) $(map[m]).classList.add("on");
 }
 window.setRadiusFree=()=>{
   const km=parseFloat($("radFree").value);
   if(!km||km<=0){alert("Bitte eine gültige km-Zahl eingeben.");return;}
   chosenRadius=Math.round(km*1000);
-  ["rad1","rad2","rad5","rad10"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
+  ["rad1","rad2","rad5"].forEach(id=>{const b=$(id);if(b)b.classList.remove("on");});
   saveField();
 };
 window.armCenterPick=()=>{
