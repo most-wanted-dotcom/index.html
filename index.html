@@ -651,6 +651,16 @@ function enterGame(){
   startTimer();
   startPingLoop();
   buildPhaseRow();
+  // Beim Eintreten: bereits vorhandene Durchsagen als "gesehen" merken,
+  // damit nicht alte Nachrichten beim Beitritt aufploppen.
+  (async()=>{
+    try{
+      const {data}=await sb.from("messages").select("id").eq("game_id",game.id);
+      (data||[]).forEach(m=>seenMsgIds.add(m.id));
+    }catch(e){}
+  })();
+  // Sicherheitsnetz: regelmäßig nach neuen Durchsagen schauen
+  setInterval(pollMessages, 5000);
   // Spielleiter lädt zusätzlich regelmäßig neu, damit die Live-Standorte sicher aktuell sind
   if(isHost()){
     setInterval(()=>{ refreshAll(); }, 10000);
@@ -693,26 +703,58 @@ async function refreshAll(){
 
 // ---------- Echtzeit ----------
 function subscribe(){
-  sb.channel("g"+game.id)
+  // Jede Tabelle bekommt einen EIGENEN Kanal – das ist deutlich zuverlässiger,
+  // als alle Abos auf einen Kanal zu legen (sonst können Events verschluckt werden).
+  sb.channel("players"+game.id)
     .on("postgres_changes",{event:"*",schema:"public",table:"players",filter:"game_id=eq."+game.id},refreshAll)
+    .subscribe();
+  sb.channel("sightings"+game.id)
     .on("postgres_changes",{event:"*",schema:"public",table:"sightings",filter:"game_id=eq."+game.id},refreshAll)
+    .subscribe();
+  sb.channel("games"+game.id)
     .on("postgres_changes",{event:"*",schema:"public",table:"games",filter:"id=eq."+game.id},onGameChange)
+    .subscribe();
+  sb.channel("messages"+game.id)
     .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:"game_id=eq."+game.id},onMessage)
+    .subscribe();
+  sb.channel("chat"+game.id)
     .on("postgres_changes",{event:"INSERT",schema:"public",table:"chat",filter:"game_id=eq."+game.id},refreshAll)
     .subscribe();
 }
 
 // Neue Durchsage empfangen → als auffälliges Fenster zeigen (wenn an mich gerichtet)
+let seenMsgIds=new Set();
 function onMessage(payload){
   const m=payload.new;
+  if(m && m.id) seenMsgIds.add(m.id);
+  displayMessage(m);
+}
+// Zeigt eine Durchsage an, sofern sie an die eigene Rolle gerichtet ist
+function displayMessage(m){
+  if(!m || !me) return;
   if(me.role==="host"){
-    // Spielleiter sieht nur die an ihn gerichteten Meldungen (z. B. Feld verlassen)
     if(m.audience==="host") showModal(m.text, "🚫");
     return;
   }
   if(m.audience==="all" || m.audience===me.role){
     showModal(m.text, "📢");
   }
+}
+// Sicherheitsnetz: alle 5 Sek prüfen, ob neue Durchsagen da sind (falls Echtzeit aussetzt)
+async function pollMessages(){
+  if(!me || !game) return;
+  try{
+    const {data}=await sb.from("messages").select()
+      .eq("game_id",game.id).order("created_at",{ascending:false}).limit(10);
+    if(!data) return;
+    // älteste zuerst durchgehen, damit die Reihenfolge stimmt
+    data.slice().reverse().forEach(m=>{
+      if(!seenMsgIds.has(m.id)){
+        seenMsgIds.add(m.id);
+        displayMessage(m);
+      }
+    });
+  }catch(e){}
 }
 
 // Spiel hat sich geändert (z. B. neue Spezialaktion ausgelöst)
