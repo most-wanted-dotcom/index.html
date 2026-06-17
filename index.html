@@ -237,6 +237,14 @@
     </div>
     <div style="font-size:11px;color:#55555c;margin-top:6px;">Jedes Target kann den Joker einmal pro Spiel selbst auslösen und ist dann 1 Minute unsichtbar.</div>
   </div>
+  <div class="field">
+    <label>SCHRUMPFENDE ZONE</label>
+    <div class="role-pick">
+      <button id="shrinkOn" class="on-target">An</button>
+      <button id="shrinkOff">Aus</button>
+    </div>
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">Das Spielfeld verkleinert sich im Laufe des Spiels schrittweise bis auf die Hälfte des Startradius. Beginnt nach einem Drittel der Spielzeit und ist zum Finale fertig. Jede Verkleinerung wird vorher angekündigt.</div>
+  </div>
   <button id="btnCreateGo" class="primary">Spiel erstellen & Lobby öffnen</button>
   <button id="btnCfgBack" class="ghostlink">Zurück</button>
 </div>
@@ -415,6 +423,7 @@ let lastPingAt=0;                  // wann zuletzt für die Hunter freigegeben w
 let lastLiveAt=0;                  // wann zuletzt live an den Spielleiter gesendet wurde
 let chosenDist=500;                // gewählte Warn-Distanz beim Erstellen
 let chosenJoker=true;              // Funkstille-Joker beim Erstellen aktiviert?
+let chosenShrink=true;             // Schrumpfende Zone beim Erstellen aktiviert?
 let jokerUsed=false;               // hat dieses Target den Joker schon benutzt?
 let nearState={};                  // merkt sich pro Hunter, ob er gerade "nah" ist (für einmalige Warnung)
 let geoActivated=false;            // einmal aktiviert → bleibt an
@@ -500,7 +509,77 @@ function renderJoinToggle(){
 async function saveField(){
   if(!isHost())return;
   const patch={field_radius:chosenRadius};
+  // Schrumpfende Zone: wenn Spiel schon läuft und noch kein Startradius gemerkt ist,
+  // den jetzt gesetzten Radius als Startwert übernehmen.
+  if(game.shrink_enabled && game.started_at && !game.shrink_start_radius){
+    patch.shrink_start_radius=chosenRadius;
+  }
   await sb.from("games").update(patch).eq("id",game.id);
+}
+
+// ---------- Schrumpfende Zone ----------
+// Berechnet die Schrumpf-Parameter aus der Spieldauer.
+// Schrumpfen beginnt bei 33,3 % der Spielzeit, endet zum Finale-Beginn,
+// und verkleinert den Radius gleichmäßig in ~15-Min-Schritten auf 50 % des Starts.
+const SHRINK_STEP_TARGET = 15*60;   // gewünschtes Schritt-Intervall (Sekunden) ~15 Min
+const SHRINK_ANNOUNCE = 60;         // Sekunden vor einem Schritt ankündigen
+function shrinkPlan(){
+  if(!game || !game.shrink_enabled || !game.started_at || !game.shrink_start_radius) return null;
+  const total=(game.duration_min||300)*60;            // gesamte Spielzeit (Sek)
+  const endg=(game.endgame_min||0)*60;                // Finale-Dauer (Sek)
+  const startAt=Math.round(total/3);                  // 33,3 % der Spielzeit
+  const endAt=Math.max(startAt+1, total-endg);        // Finale-Beginn (Schrumpfen fertig)
+  const windowSec=endAt-startAt;                      // Schrumpf-Fenster
+  if(windowSec<=0) return null;
+  // Anzahl Schritte so wählen, dass sie ~15 Min auseinander liegen (mind. 1)
+  const steps=Math.max(1, Math.round(windowSec/SHRINK_STEP_TARGET));
+  const stepSec=windowSec/steps;                      // exakte Schrittlänge
+  const r0=game.shrink_start_radius;                  // Startradius
+  const rEnd=r0*0.5;                                  // Endradius = 50 %
+  return {total,startAt,endAt,windowSec,steps,stepSec,r0,rEnd};
+}
+// Liefert den Soll-Radius (Meter) für die bereits verstrichene Spielzeit.
+function shrinkTargetRadius(elapsed){
+  const pl=shrinkPlan();
+  if(!pl) return null;
+  if(elapsed<=pl.startAt) return pl.r0;               // vor Schrumpf-Start: voller Radius
+  if(elapsed>=pl.endAt)   return Math.round(pl.rEnd); // nach Fenster: 50 %
+  // wie viele Schritte sind abgeschlossen?
+  const doneSteps=Math.floor((elapsed-pl.startAt)/pl.stepSec);
+  const frac=Math.min(1, doneSteps/pl.steps);         // Anteil 0..1
+  return Math.round(pl.r0 + (pl.rEnd-pl.r0)*frac);
+}
+// Host-Logik: prüft jede Sekunde, ob ein Schrumpf-Schritt ansteht, kündigt ihn an
+// und schreibt den neuen, kleineren Radius in die Datenbank.
+let shrinkLastStep=-1, shrinkAnnouncedFor=-1;
+async function tickShrink(elapsed){
+  if(!isHost()) return;
+  const pl=shrinkPlan();
+  if(!pl || !game.field_radius) return;
+  // aktueller Schritt-Index (0 = noch nicht geschrumpft)
+  let curStep=0;
+  if(elapsed>=pl.endAt) curStep=pl.steps;
+  else if(elapsed>pl.startAt) curStep=Math.floor((elapsed-pl.startAt)/pl.stepSec);
+  // Ankündigung ~60 Sek vor dem nächsten Schritt
+  const nextStep=curStep+1;
+  if(nextStep<=pl.steps){
+    const nextStepTime=pl.startAt + nextStep*pl.stepSec;
+    const secsTo=nextStepTime-elapsed;
+    if(secsTo>0 && secsTo<=SHRINK_ANNOUNCE && shrinkAnnouncedFor!==nextStep){
+      shrinkAnnouncedFor=nextStep;
+      await sb.from("messages").insert({game_id:game.id,audience:"all",
+        text:"⚠️ Die Zone wird gleich kleiner! Bewegt euch zur Mitte."});
+    }
+  }
+  // Schritt ausführen: neuen Soll-Radius setzen, wenn er sich geändert hat
+  if(curStep!==shrinkLastStep){
+    shrinkLastStep=curStep;
+    const want=shrinkTargetRadius(elapsed);
+    if(want!=null && Math.abs((game.field_radius||0)-want)>=1){
+      game.field_radius=want;
+      await sb.from("games").update({field_radius:want}).eq("id",game.id);
+    }
+  }
 }
 
 // Entfernung zwischen zwei GPS-Punkten in Metern (Haversine-Formel)
@@ -572,6 +651,8 @@ $("d500").onclick=()=>{chosenDist=500;$("d500").className="on-target";$("d1000")
 $("d1000").onclick=()=>{chosenDist=1000;$("d1000").className="on-target";$("d500").className="";};
 $("jokerOn").onclick=()=>{chosenJoker=true;$("jokerOn").className="on-target";$("jokerOff").className="";};
 $("jokerOff").onclick=()=>{chosenJoker=false;$("jokerOff").className="on-target";$("jokerOn").className="";};
+$("shrinkOn").onclick=()=>{chosenShrink=true;$("shrinkOn").className="on-target";$("shrinkOff").className="";};
+$("shrinkOff").onclick=()=>{chosenShrink=false;$("shrinkOff").className="on-target";$("shrinkOn").className="";};
 
 // Target löst seinen persönlichen Funkstille-Joker aus (1 Min, einmalig)
 window.useJoker=async()=>{
@@ -624,7 +705,8 @@ $("btnCreateGo").onclick=async()=>{
     duration_min: Math.round(hours*60),
     headstart_min: headMin,
     endgame_min: endMin,
-    joker_enabled: chosenJoker
+    joker_enabled: chosenJoker,
+    shrink_enabled: chosenShrink
   }).select().single();
   if(error){alert("Fehler: "+error.message);return;}
   chosenRole="host";
@@ -706,6 +788,11 @@ function enterGame(){
   // Spielleiter lädt zusätzlich regelmäßig neu, damit die Live-Standorte sicher aktuell sind
   if(isHost()){
     setInterval(()=>{ refreshAll(); }, 10000);
+  }
+  // Hunter lädt regelmäßig neu, damit die Live-Position der Targets für die
+  // Schnappen-Distanz (≤25 m) zuverlässig aktuell ist – auch wenn das Echtzeit-Abo aussetzt.
+  if(me.role==="hunter"){
+    setInterval(()=>{ refreshAll(); }, 8000);
   }
   // Standort war schon aktiviert? Dann nach dem Neuladen automatisch wieder starten.
   let geoWasOn=false;
@@ -912,11 +999,35 @@ function render(){
   $("playerList").innerHTML=players.map(p=>{
     const r=ROLES[p.role];
     const canCatch=p.role==="target"&&me.role==="hunter";
+    // GPS-gestütztes Schnappen: Knopf wird erst klickbar, wenn der Hunter nah genug
+    // am Target ist (Ziel 20 m + 5 m GPS-Puffer = 25 m). Die Distanz wird NICHT
+    // angezeigt – der Knopf dient nur als Fang-Barriere gegen Schummeln, nicht als Peilhilfe.
+    const CATCH_DIST=25;  // Meter (20 m Wunsch + 5 m Puffer)
+    let catchBtn="";
+    if(canCatch){
+      if(p.caught){
+        // bereits geschnappt → "Frei"-Knopf (immer möglich)
+        catchBtn=`<button class="catch-btn" style="background:#1c3a24;color:#7ee787" onclick="toggleCaught('${p.id}',true)">Frei</button>`;
+      }else{
+        // Distanz Hunter ↔ Target intern berechnen (beide brauchen Live-Standort)
+        let near=false;
+        if(myLat!=null && p.live_lat!=null){
+          near = distMeters(myLat,myLng,p.live_lat,p.live_lng) <= CATCH_DIST;
+        }
+        if(near){
+          // nah genug → Schnappen freigegeben (keine Distanz sichtbar)
+          catchBtn=`<button class="catch-btn" style="background:#3a1c1c;color:#ff7b72" onclick="toggleCaught('${p.id}',false)">Schnappen</button>`;
+        }else{
+          // zu weit weg → gesperrt, OHNE Meter-Angabe (kein Peilsender)
+          catchBtn=`<button class="catch-btn" disabled style="background:#1a1a1d;color:#666;opacity:.6">Schnappen</button>`;
+        }
+      }
+    }
     return `<div class="row ${p.caught?"caught":""}">
       <div class="dot" style="background:${r.color}">${r.icon}</div>
       <span class="nm">${esc(p.name)}${p.id===me.id?" (du)":""}</span>
       <span class="tag" style="color:${r.color};border:1px solid ${r.color}55">${r.label}</span>
-      ${canCatch?`<button class="catch-btn" style="background:${p.caught?"#1c3a24":"#3a1c1c"};color:${p.caught?"#7ee787":"#ff7b72"}" onclick="toggleCaught('${p.id}',${p.caught})">${p.caught?"Frei":"Schnappen"}</button>`:""}
+      ${catchBtn}
     </div>`;
   }).join("");
 
@@ -1184,6 +1295,12 @@ function startPingLoop(){
         try{ render(); }catch(e){}   // Punkte verschwinden (Start) bzw. kommen zurück (Ende)
       }
     }
+    // Hunter: Spielerliste alle 2 Sek neu zeichnen, damit die Schnappen-Distanz
+    // mitzählt, während er sich bewegt (Knopf entsperrt bei ≤25 m).
+    if(me && me.role==="hunter"){
+      hunterRenderTick=(hunterRenderTick+1)%2;
+      if(hunterRenderTick===0){ try{ render(); }catch(e){} }
+    }
     if(!geoActivated||myLat==null) return;
     // alle 20 Sek live an den Spielleiter
     if(Date.now()/1000-lastLiveAt >= LIVE_EVERY) sendLive();
@@ -1201,6 +1318,7 @@ function startPingLoop(){
   },1000);
 }
 let lastSilenceState=false;
+let hunterRenderTick=0;
 
 // Zeigt eine laufende Spezialaktion mit Restzeit an
 function updatePowerBar(){
@@ -1240,6 +1358,11 @@ function startTimer(){
       $("timer").style.color=left<3600?"var(--orange)":"var(--text)";
       $("totalTime").textContent="Du steuerst das Spiel – Live-Standorte alle 20 Sek.";
       autoPhase(left);
+      // Schrumpfende Zone: prüfen/ausführen (verstrichene Spielzeit in Sek)
+      if(game.started_at){
+        const elapsedHost=(Date.now()-new Date(game.started_at))/1000;
+        tickShrink(elapsedHost);
+      }
       if(left <= -3600){ clearSession(); alert("Das Spiel ist beendet. Die Sitzung wird geschlossen."); location.reload(); }
       return;
     }
@@ -1302,12 +1425,17 @@ window.startGame=async()=>{
   const now=new Date();
   const head=(game.headstart_min||0);
   const firstPhase = head>0 ? "headstart" : "hunt";
-  await sb.from("games").update({
+  const patch={
     started_at: now.toISOString(),
     ends_at: new Date(now.getTime()+dur).toISOString(),
     phase: firstPhase,
     join_open: false
-  }).eq("id",game.id);
+  };
+  // Schrumpfende Zone: aktuellen Radius als Startwert merken (falls Feld schon gesetzt)
+  if(game.shrink_enabled && game.field_radius){
+    patch.shrink_start_radius = game.field_radius;
+  }
+  await sb.from("games").update(patch).eq("id",game.id);
 };
 
 // ---------- Verlassen ----------
