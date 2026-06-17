@@ -101,6 +101,13 @@
   .field-clear{background:transparent;color:#888;border:1px solid var(--line);padding:10px;border-radius:10px;font-size:13px;}
   .joker-btn{display:block;margin:0 16px 8px;width:calc(100% - 32px);background:linear-gradient(180deg,#7c4dff,#5b2ecc);color:#fff;border:none;padding:13px;border-radius:11px;font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:.03em;box-shadow:0 4px 14px rgba(124,77,255,.4);}
   .joker-btn:disabled{opacity:.4;background:#333;box-shadow:none;}
+  .score-row{display:flex;align-items:center;gap:10px;padding:11px 12px;background:#161619;border:1px solid #1f1f22;border-radius:10px;margin-bottom:8px;}
+  .score-rank{font-family:var(--display);font-weight:700;font-size:18px;color:var(--orange);min-width:28px;}
+  .score-name{flex:1;font-weight:600;}
+  .score-time{font-family:var(--mono);font-size:13px;color:var(--muted);}
+  .score-badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;}
+  .badge-survived{background:#10331f;color:#7ee787;}
+  .badge-caught{background:#3a1c1c;color:#ff7b72;}
   .phase-step{flex:1;min-width:62px;background:var(--panel2);color:#8a7d6e;border:none;padding:9px 4px;border-radius:8px;font-family:var(--display);font-weight:600;font-size:12px;letter-spacing:.03em;white-space:nowrap;text-transform:uppercase;}
 
   .stats{display:flex;gap:8px;padding:8px 14px;}
@@ -322,6 +329,12 @@
       <button id="btnTip" class="addbtn">+</button>
     </div>
     <div id="tipList"></div>
+  </div>
+
+  <!-- Endabrechnung (nach Spielende) -->
+  <div id="scoreboard" class="card hidden" style="border-color:var(--orange-deep);">
+    <div class="card-head"><span class="card-title">🏁 Endabrechnung</span></div>
+    <div id="scoreList" style="padding:0 16px 16px;"></div>
   </div>
 
   <button id="btnLeave" class="leave">Spiel verlassen</button>
@@ -746,6 +759,7 @@ function alertSignal(){
 function render(){
   const ph=PHASES.find(p=>p.id===game.phase)||PHASES[0];
   $("phaseDesc").textContent=ph.desc + (isHost()?"  ·  du bist Spielleiter":"");
+  renderScoreboard();
   // Spielleiter-Steuerpult nur dem Host zeigen
   $("hostPanel").classList.toggle("hidden", !isHost());
   if(isHost() && game.field_radius){ chosenRadius=game.field_radius; markRadius(game.field_radius); }
@@ -814,6 +828,38 @@ function render(){
   }).join(""):'<div class="empty">Noch keine Sichtungen gemeldet.</div>';
 }
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+// ---------- Endabrechnung ----------
+function renderScoreboard(){
+  const over = game.phase==="over";
+  $("scoreboard").classList.toggle("hidden", !over);
+  if(!over) return;
+
+  const start = game.started_at ? new Date(game.started_at) : null;
+  const end   = game.ends_at ? new Date(game.ends_at) : new Date();
+  const targets = players.filter(p=>p.role==="target");
+
+  // Überlebenszeit berechnen: bis Geschnappt-Zeitpunkt, sonst bis Spielende
+  const rows = targets.map(t=>{
+    let survSec=0;
+    if(start){
+      const until = t.caught && t.caught_at ? new Date(t.caught_at) : end;
+      survSec = Math.max(0, Math.round((until-start)/1000));
+    }
+    return { name:t.name, caught:t.caught, survSec };
+  });
+
+  // Sortieren: längste Überlebenszeit zuerst (Entkommene oben)
+  rows.sort((a,b)=> (a.caught===b.caught) ? b.survSec-a.survSec : (a.caught?1:-1));
+
+  $("scoreList").innerHTML = rows.length ? rows.map((r,i)=>`
+    <div class="score-row">
+      <span class="score-rank">${i+1}</span>
+      <span class="score-name">${esc(r.name)}</span>
+      <span class="score-time">${fmt(r.survSec)}</span>
+      <span class="score-badge ${r.caught?"badge-caught":"badge-survived"}">${r.caught?"geschnappt":"entkommen"}</span>
+    </div>`).join("") : '<div class="empty">Keine Targets im Spiel.</div>';
+}
 
 // ---------- Leaflet-Karte (OpenStreetMap) ----------
 let lmap=null, lmarkers={}, mapInitDone=false, didAutoFit=false;
@@ -887,7 +933,11 @@ function drawMarkers(list){
 }
 
 // ---------- Aktionen ----------
-window.toggleCaught=async(id,cur)=>{await sb.from("players").update({caught:!cur}).eq("id",id);};
+window.toggleCaught=async(id,cur)=>{
+  // Beim Schnappen den Zeitpunkt merken (für die Endabrechnung); beim Freigeben löschen
+  const patch = cur ? {caught:false, caught_at:null} : {caught:true, caught_at:new Date().toISOString()};
+  await sb.from("players").update(patch).eq("id",id);
+};
 
 $("btnTip").onclick=async()=>{
   const target=$("tipTarget").value, text=$("tipText").value.trim();
