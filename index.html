@@ -652,11 +652,13 @@ function guard(){
 
 async function joinGame(g,name,asHost){
   game=g;
+  // Der Ersteller bekommt die Rolle "host", normale Spieler ihre gewählte Rolle.
+  const role = asHost ? "host" : chosenRole;
   const {data,error}=await sb.from("players")
-    .insert({game_id:g.id,name,role:chosenRole}).select().single();
+    .insert({game_id:g.id,name,role}).select().single();
   if(error){showErr("Beitritt fehlgeschlagen: "+error.message);return;}
   me=data;
-  // Ersteller wird als Spielleiter (host) im Spiel eingetragen
+  // Ersteller wird zusätzlich als Spielleiter (host_id) im Spiel vermerkt
   if(asHost){
     await sb.from("games").update({host_id:me.id}).eq("id",g.id);
     game.host_id=me.id;
