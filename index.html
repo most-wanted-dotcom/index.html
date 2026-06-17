@@ -489,6 +489,9 @@ function distMeters(lat1,lng1,lat2,lng2){
 // Prüft (nur für Targets): ist ein Hunter näher als die Warn-Distanz?
 // Warnt einmalig pro Annäherung. Reset, wenn der Hunter > 1,5x Distanz weg ist.
 function checkProximity(){
+  // Feld-Grenze gilt für Target UND Hunter – daher zuerst und unabhängig prüfen
+  checkField();
+  // Annäherungs-Warnung nur für Targets
   if(!me || me.role!=="target" || myLat==null || me.caught) return;
   const warn=(game && game.warn_dist) ? game.warn_dist : 500;
   const reset=warn*1.5;  // erst wieder warnen, wenn Hunter sich deutlich entfernt hat
@@ -502,27 +505,28 @@ function checkProximity(){
       nearState[h.id]=false;  // wieder weit weg → nächste Annäherung kann erneut warnen
     }
   });
-  checkField();
 }
 
-// Prüft, ob das Target das Spielfeld verlassen hat. Warnt beim Verlassen sofort
-// und danach alle 60 Sekunden erneut, solange es draußen bleibt (Target + Spielleiter).
+// Prüft, ob ich (Target ODER Hunter) das Spielfeld verlassen habe. Warnt beim
+// Verlassen sofort und danach alle 60 Sekunden erneut, solange ich draußen bin.
+// Der Spielleiter wird jeweils mitbenachrichtigt.
 let lastFieldWarn=0;
 async function checkField(){
+  if(!me || isHost() || myLat==null || me.caught) return;        // Host hat kein Feld-Limit
   if(!game || game.field_lat==null || !game.field_radius) return;
   const dist=distMeters(myLat,myLng,game.field_lat,game.field_lng);
   const outside=dist>game.field_radius;
   const now=Date.now();
   if(outside){
-    // beim ersten Verlassen sofort, danach alle 60 Sek erneut
     if(!outsideState || now-lastFieldWarn >= 60000){
       outsideState=true;
       lastFieldWarn=now;
       showModal("Du hast das Spielfeld verlassen! Geh zurück ins markierte Gebiet.", "🚫");
-      await sb.from("messages").insert({game_id:game.id,audience:"host",text:`${me.name} ist außerhalb des Spielfelds!`});
+      const rolle = me.role==="hunter" ? "Hunter" : "Target";
+      await sb.from("messages").insert({game_id:game.id,audience:"host",text:`${me.name} (${rolle}) ist außerhalb des Spielfelds!`});
     }
   } else if(outsideState){
-    outsideState=false;   // wieder drin → beim nächsten Verlassen sofort wieder warnen
+    outsideState=false;
     lastFieldWarn=0;
   }
 }
