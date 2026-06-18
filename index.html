@@ -1373,6 +1373,13 @@ function displayMessage(m){
     }
     return;
   }
+  // Geschnappt: nur das betroffene Target bekommt die Aufforderung zum Startpunkt
+  if(m.audience==="caught-one"){
+    if(m.target_id===me.id){
+      showModal(m.text, "🚩");
+    }
+    return;
+  }
   // Zonen-Warnung geht an ALLE inkl. Spielleiter
   if(m.audience==="all-incl-host"){
     showModal(m.text, "⚠️");
@@ -1412,6 +1419,7 @@ async function pollMessages(){
 // Spiel hat sich geändert (z. B. neue Spezialaktion ausgelöst)
 let lastPowerStamp=null;
 let lastFreezeShown=null;
+let lastPhaseForOver=null;
 function onGameChange(payload){
   const g=payload.new;
   // Wenn eine neue Aktion gestartet wurde, ankündigen
@@ -1448,10 +1456,25 @@ function onGameChange(payload){
       }
     }
   }
+  // Phasenwechsel zu "over": Siegerehrungs-Meldung an die noch Übrigen
+  if(g.phase==="over" && lastPhaseForOver!=="over"){
+    lastPhaseForOver="over";
+    if(me){
+      if(me.role==="host"){
+        showModal("Das Spiel ist vorbei! Die Sieger stehen fest – ab zur Siegerehrung am Startpunkt.", "🏆");
+      } else if(me.role==="target" && !me.caught){
+        showModal("🏆 Du hast überlebt – Glückwunsch! Komm zum Startpunkt zur Siegerehrung.", "🏆");
+      } else if(me.role==="target" && me.caught){
+        showModal("Das Spiel ist vorbei. Komm zum Startpunkt zur Siegerehrung.", "🏁");
+      } else if(me.role==="hunter"){
+        showModal("Das Spiel ist vorbei! Komm zum Startpunkt zur Siegerehrung.", "🏆");
+      }
+    }
+  }
+  if(g.phase) lastPhaseForOver=g.phase;
   refreshAll();
 }
 
-// Kleines Banner – nur für kurze Bestätigungen (z. B. "Durchsage gesendet")
 let popupTimer=null;
 function showPopup(text, audience){
   const el=$("popup");
@@ -1719,16 +1742,18 @@ function renderChat(){
 }
 
 function renderScoreboard(){
-  const over = game.phase==="over";
+  // Die vollständige Sieger-Auswertung sieht nur der Spielleiter.
+  const over = game.phase==="over" && isHost();
   $("scoreboard").classList.toggle("hidden", !over);
   if(!over) return;
 
   const start = game.started_at ? new Date(game.started_at) : null;
   const end   = game.ends_at ? new Date(game.ends_at) : new Date();
   const targets = players.filter(p=>p.role==="target");
+  const hunters = players.filter(p=>p.role==="hunter");
 
-  // Überlebenszeit berechnen: bis Geschnappt-Zeitpunkt, sonst bis Spielende
-  const rows = targets.map(t=>{
+  // --- Targets: Überlebenszeit (bis Geschnappt-Zeitpunkt, sonst bis Spielende) ---
+  const tRows = targets.map(t=>{
     let survSec=0;
     if(start){
       const until = t.caught && t.caught_at ? new Date(t.caught_at) : end;
@@ -1736,17 +1761,42 @@ function renderScoreboard(){
     }
     return { name:t.name, caught:t.caught, survSec };
   });
+  // Entkommene oben, dann längste Überlebenszeit
+  tRows.sort((a,b)=> (a.caught===b.caught) ? b.survSec-a.survSec : (a.caught?1:-1));
+  // Sieger-Targets: alle Entkommenen sind Sieger; gibt es keine Entkommenen,
+  // ist das am längsten überlebende Target Sieger.
+  const anyEscaped = tRows.some(r=>!r.caught);
+  const topSurv = tRows.length ? tRows[0].survSec : 0;
+  const isTargetWinner = (r)=> anyEscaped ? !r.caught : (r.survSec===topSurv);
 
-  // Sortieren: längste Überlebenszeit zuerst (Entkommene oben)
-  rows.sort((a,b)=> (a.caught===b.caught) ? b.survSec-a.survSec : (a.caught?1:-1));
+  // --- Hunter: Anzahl gefangener Targets ---
+  const hRows = hunters.map(h=>{
+    const catches = targets.filter(t=>t.caught && t.caught_by===h.name).length;
+    return { name:h.name, catches };
+  });
+  hRows.sort((a,b)=> b.catches-a.catches);
+  const topCatch = hRows.length ? hRows[0].catches : 0;
+  const isHunterWinner = (r)=> topCatch>0 && r.catches===topCatch;
 
-  $("scoreList").innerHTML = rows.length ? rows.map((r,i)=>`
+  const tHtml = tRows.length ? tRows.map((r,i)=>`
     <div class="score-row">
-      <span class="score-rank">${i+1}</span>
+      <span class="score-rank">${isTargetWinner(r)?"🏆":(i+1)}</span>
       <span class="score-name">${esc(r.name)}</span>
       <span class="score-time">${fmt(r.survSec)}</span>
-      <span class="score-badge ${r.caught?"badge-caught":"badge-survived"}">${r.caught?"geschnappt":"entkommen"}</span>
+      <span class="score-badge ${r.caught?"badge-caught":"badge-survived"}">${r.caught?"geschnappt":"überlebt"}</span>
     </div>`).join("") : '<div class="empty">Keine Targets im Spiel.</div>';
+
+  const hHtml = hRows.length ? hRows.map((r,i)=>`
+    <div class="score-row">
+      <span class="score-rank">${isHunterWinner(r)?"🏆":(i+1)}</span>
+      <span class="score-name">${esc(r.name)}</span>
+      <span class="score-time">${r.catches} ${r.catches===1?"Fang":"Fänge"}</span>
+      <span class="score-badge ${isHunterWinner(r)?"badge-survived":""}">${isHunterWinner(r)?"Top-Jäger":""}</span>
+    </div>`).join("") : '<div class="empty">Keine Hunter im Spiel.</div>';
+
+  $("scoreList").innerHTML =
+    `<div style="font-weight:700;font-size:13px;color:var(--muted);margin:4px 0 8px;">🎯 TARGETS · Überlebenszeit</div>`+tHtml+
+    `<div style="font-weight:700;font-size:13px;color:var(--muted);margin:16px 0 8px;">🥷 HUNTER · gefangene Targets</div>`+hHtml;
 }
 
 // ---------- Leaflet-Karte (OpenStreetMap) ----------
@@ -1822,17 +1872,21 @@ function drawMarkers(list){
 
 // ---------- Aktionen ----------
 window.toggleCaught=async(id,cur)=>{
-  // Beim Schnappen den Zeitpunkt merken (für die Endabrechnung); beim Freigeben löschen
-  const patch = cur ? {caught:false, caught_at:null} : {caught:true, caught_at:new Date().toISOString()};
+  // Beim Schnappen Zeitpunkt + Fänger merken; beim Freigeben löschen
+  const patch = cur
+    ? {caught:false, caught_at:null, caught_by:null}
+    : {caught:true, caught_at:new Date().toISOString(), caught_by: (me?me.name:null)};
   await sb.from("players").update(patch).eq("id",id);
-  // Beim Schnappen: deutliche Meldung an den Spielleiter
+  // Beim Schnappen: Meldung an Spielleiter + an das geschnappte Target
   if(!cur){
     const t=players.find(p=>p.id===id);
     const tName=t ? t.name : "Ein Target";
     const byName = me ? me.name : "Ein Hunter";
     try{
-      await sb.from("messages").insert({game_id:game.id,audience:"host",
-        text:`🎯 ${tName} wurde von ${byName} geschnappt!`});
+      await sb.from("messages").insert([
+        {game_id:game.id,audience:"host",text:`🎯 ${tName} wurde von ${byName} geschnappt!`},
+        {game_id:game.id,audience:"caught-one",target_id:id,text:"🚩 Du wurdest geschnappt! Begib dich zum Startpunkt."}
+      ]);
     }catch(e){}
   }
 };
@@ -2278,18 +2332,25 @@ let phaseWriteLock=null;
 async function autoPhase(left){
   if(!game.started_at) return;
   const head=(game.headstart_min||0)*60;
-  // Endspiel startet IMMER bei 15 Min Restzeit – unabhängig von der Einstellung.
-  const endg=ENDGAME_SEC;
+  // Finale-Beginn aus der Einstellung (Finale-Dauer), Fallback 15 Min
+  const endg=(game.endgame_min ? game.endgame_min*60 : ENDGAME_SEC);
   const elapsed=(Date.now()-new Date(game.started_at))/1000;
+  // Sind alle Targets gefangen? Dann ist das Spiel vorbei.
+  const targets=players.filter(p=>p.role==="target");
+  const allCaught = targets.length>0 && targets.every(t=>t.caught);
   let want;
-  if(left<=0) want="over";
+  if(left<=0 || allCaught) want="over";
   else if(left<=endg) want="endgame";
   else if(head>0 && elapsed<head) want="headstart";
   else want="hunt";
   if(want!==game.phase && phaseWriteLock!==want){
     phaseWriteLock=want;                 // verhindert mehrfaches Schreiben pro Sekunde
     game.phase=want;                     // sofort lokal setzen, damit die Anzeige stimmt
-    await sb.from("games").update({phase:want}).eq("id",game.id);
+    const patch={phase:want};
+    // Beim Übergang zu "over" durch alle-gefangen die Endzeit auf jetzt setzen,
+    // damit die Überlebenszeiten korrekt bis hierhin gerechnet werden.
+    if(want==="over" && allCaught && left>0) patch.ends_at=new Date().toISOString();
+    await sb.from("games").update(patch).eq("id",game.id);
   }
 }
 
