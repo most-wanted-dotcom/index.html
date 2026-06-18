@@ -90,7 +90,7 @@
   @keyframes popbig{from{transform:scale(.9);opacity:0;}to{transform:scale(1);opacity:1;}}
   .modal-x{position:absolute;top:12px;right:14px;background:rgba(255,255,255,.1);color:#fff;border:none;width:34px;height:34px;border-radius:50%;font-size:16px;font-weight:700;line-height:1;}
   .modal-icon{font-size:46px;margin-bottom:10px;}
-  .modal-text{font-family:var(--display);font-weight:600;font-size:21px;color:#fff;line-height:1.25;letter-spacing:.02em;margin-bottom:20px;}
+  .modal-text{font-family:var(--display);font-weight:600;font-size:21px;color:#fff;line-height:1.25;letter-spacing:.02em;margin-bottom:20px;white-space:pre-line;}
   .modal-ok{background:var(--red);color:#fff;border:none;width:100%;padding:14px;border-radius:11px;font-family:var(--display);font-weight:700;font-size:16px;letter-spacing:.04em;text-transform:uppercase;}
 
   /* Eiswürfel-Meldung (Hunter eingefroren) */
@@ -329,17 +329,22 @@
         <button onclick="power('reveal')">🎯 Sofort aufdecken</button>
       </div>
 
-      <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">❄️ HUNTER EINFRIEREN</div>
-      <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Eingefrorene Hunter bekommen eine Eiswürfel-Meldung und sollen sich für die Dauer nicht bewegen.</div>
+      <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">❄️ EINFRIEREN</div>
+      <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Eingefrorene Spieler bekommen eine große Eiswürfel-Meldung mit Countdown und sollen sich nicht bewegen. Schließen geht erst, wenn die Zeit abgelaufen ist.</div>
+      <select id="freezeRole" style="width:100%;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;margin-bottom:8px;" onchange="renderHostControls()">
+        <option value="hunter">Hunter</option>
+        <option value="target">Targets</option>
+        <option value="all">Alle Spieler</option>
+      </select>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
         <select id="freezeTarget" style="flex:1;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;">
-          <option value="">Alle Hunter</option>
+          <option value="">Alle</option>
         </select>
         <input id="freezeSecs" type="number" min="10" max="600" step="10" value="60" style="width:78px;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;" />
         <span style="font-size:12px;color:var(--muted);">Sek</span>
       </div>
       <div class="power-grid">
-        <button onclick="freezeHunters()" style="background:#0d3b5c;color:#bfe6ff;border-color:#7ec8ff;">❄️ Einfrieren</button>
+        <button onclick="freezePlayers()" style="background:#0d3b5c;color:#bfe6ff;border-color:#7ec8ff;">❄️ Einfrieren</button>
       </div>
 
       <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">🃏 JOKER ZUWEISEN</div>
@@ -419,10 +424,10 @@
 <div id="modal" class="modal hidden">
   <div id="modalBox" class="modal-box">
     <div id="modalFrost" class="frost hidden"></div>
-    <button class="modal-x" onclick="closeModal()" aria-label="Schließen">✕</button>
+    <button id="modalX" class="modal-x" onclick="closeModal()" aria-label="Schließen">✕</button>
     <div id="modalIcon" class="modal-icon">⚠️</div>
     <div id="modalText" class="modal-text"></div>
-    <button class="modal-ok" onclick="closeModal()">Verstanden</button>
+    <button id="modalOk" class="modal-ok" onclick="closeModal()">Verstanden</button>
   </div>
 </div>
 
@@ -475,6 +480,7 @@ let geoActivated=false;            // einmal aktiviert → bleibt an
 const LIVE_EVERY = 20;      // Sekunden – Live-Update an den Spielleiter
 const PING_NORMAL = 15*60;  // 15 Minuten – Freigabe an die Hunter
 const PING_ENDGAME = 5*60;  // 5 Minuten im Endspiel
+const ENDGAME_SEC = 15*60;  // Endspiel startet immer bei 15 Min Restzeit
 function pingInterval(){
   const p=activePower();
   // live/silence wirken auf den Ping-Takt nur, wenn sie MICH (dieses Target) betreffen
@@ -505,11 +511,16 @@ function powerAffectsTarget(playerId){
   if(!game) return false;
   return !game.power_player || game.power_player===playerId;
 }
-// Bin ICH (als Hunter) gerade eingefroren?
+// Bin ICH gerade eingefroren? Berücksichtigt Rolle (hunter/target/all) und Person.
 function amIFrozen(){
-  if(!me || me.role!=="hunter") return false;
+  if(!me || me.role==="host") return false;
   if(activePower()!=="freeze") return false;
-  return !game.power_player || game.power_player===me.id;
+  // Einzelne Person ausgewählt?
+  if(game.power_player) return game.power_player===me.id;
+  // Sonst nach Rolle
+  const r=game.power_role||"hunter";
+  if(r==="all") return true;
+  return r===me.role;
 }
 function isHost(){ return me && (me.role==="host" || (game && game.host_id && me.id===game.host_id)); }
 
@@ -571,8 +582,14 @@ function renderHostControls(){
   const ft=$("freezeTarget");
   if(ft){
     const cur=ft.value;
-    ft.innerHTML='<option value="">Alle Hunter</option>'+
-      hunters.map(h=>`<option value="${h.id}">${esc(h.name)}</option>`).join("");
+    const fr=$("freezeRole") ? $("freezeRole").value : "hunter";
+    let pool=[];
+    if(fr==="hunter")      pool=hunters;
+    else if(fr==="target") pool=targets;
+    else                   pool=players.filter(p=>p.role!=="host");  // alle
+    const label = fr==="all" ? "Alle Spieler" : (fr==="target" ? "Alle Targets" : "Alle Hunter");
+    ft.innerHTML=`<option value="">${label}</option>`+
+      pool.map(h=>`<option value="${h.id}">${esc(h.name)} (${h.role==="hunter"?"Hunter":"Target"})</option>`).join("");
     if([...ft.options].some(o=>o.value===cur)) ft.value=cur;
   }
   // Joker-Zuweisung: pro Target ein Knopf (geben / wegnehmen)
@@ -621,7 +638,8 @@ const SHRINK_ANNOUNCE = 60;         // Sekunden vor einem Schritt ankündigen
 function shrinkPlan(){
   if(!game || !game.shrink_enabled || !game.started_at || !game.shrink_start_radius) return null;
   const total=(game.duration_min||300)*60;            // gesamte Spielzeit (Sek)
-  const endg=(game.endgame_min||0)*60;                // Finale-Dauer (Sek)
+  // Schrumpfen ist abgeschlossen, wenn das Endspiel beginnt (immer 15 Min vor Schluss).
+  const endg=ENDGAME_SEC;
   const startAt=Math.round(total/3);                  // 33,3 % der Spielzeit
   const endAt=Math.max(startAt+1, total-endg);        // Finale-Beginn (Schrumpfen fertig)
   const windowSec=endAt-startAt;                      // Schrumpf-Fenster
@@ -649,21 +667,28 @@ function shrinkTargetRadius(elapsed){
 let shrinkLastStep=-1, shrinkAnnouncedFor=-1;
 async function tickShrink(elapsed){
   if(!isHost()) return;
+  if(!game.shrink_enabled) return;
+  // Sicherheitsnetz: fehlt der Startradius (z. B. altes Spiel), jetzt aus dem
+  // aktuellen Feld-Radius nachtragen, damit überhaupt geschrumpft werden kann.
+  if(!game.shrink_start_radius && game.field_radius){
+    game.shrink_start_radius=game.field_radius;
+    try{ await sb.from("games").update({shrink_start_radius:game.field_radius}).eq("id",game.id); }catch(e){}
+  }
   const pl=shrinkPlan();
   if(!pl || !game.field_radius) return;
   // aktueller Schritt-Index (0 = noch nicht geschrumpft)
   let curStep=0;
   if(elapsed>=pl.endAt) curStep=pl.steps;
   else if(elapsed>pl.startAt) curStep=Math.floor((elapsed-pl.startAt)/pl.stepSec);
-  // Ankündigung ~60 Sek vor dem nächsten Schritt
+  // Ankündigung ~60 Sek vor dem nächsten Schritt (an ALLE inkl. Spielleiter)
   const nextStep=curStep+1;
   if(nextStep<=pl.steps){
     const nextStepTime=pl.startAt + nextStep*pl.stepSec;
     const secsTo=nextStepTime-elapsed;
     if(secsTo>0 && secsTo<=SHRINK_ANNOUNCE && shrinkAnnouncedFor!==nextStep){
       shrinkAnnouncedFor=nextStep;
-      await sb.from("messages").insert({game_id:game.id,audience:"all",
-        text:"⚠️ Die Zone wird gleich kleiner! Bewegt euch zur Mitte."});
+      await sb.from("messages").insert({game_id:game.id,audience:"all-incl-host",
+        text:"⚠️ Die Zone wird in etwa 60 Sekunden kleiner! Bewegt euch zur Mitte."});
     }
   }
   // Schritt ausführen: neuen Soll-Radius setzen, wenn er sich geändert hat
@@ -1001,8 +1026,18 @@ async function refreshAll(){
     const fresh=players.find(p=>p.id===me.id);
     if(fresh && fresh.role===me.role) me=fresh;
   }
+  // Fallback: ein verpasstes Einfrieren nachholen (falls das Echtzeit-Event ausblieb).
+  // Nur einmal pro Aktion und nur, solange es noch läuft.
+  if(game && game.power_kind==="freeze" && game.power_until && game.power_until!==lastFreezeShown){
+    const leftMs=new Date(game.power_until)-new Date();
+    if(leftMs>1500 && amIFrozen()){
+      lastFreezeShown=game.power_until;
+      showFreezeModal(Math.ceil(leftMs/1000));
+    }
+  }
   render();
 }
+
 
 // ---------- Echtzeit ----------
 function subscribe(){
@@ -1035,6 +1070,11 @@ function onMessage(payload){
 // Zeigt eine Durchsage an, sofern sie an die eigene Rolle gerichtet ist
 function displayMessage(m){
   if(!m || !me) return;
+  // Zonen-Warnung geht an ALLE inkl. Spielleiter
+  if(m.audience==="all-incl-host"){
+    showModal(m.text, "⚠️");
+    return;
+  }
   if(me.role==="host"){
     if(m.audience==="host"){
       const icon = m.text.includes("das Spiel verlassen") ? "🚪" : "🚫";
@@ -1065,6 +1105,7 @@ async function pollMessages(){
 
 // Spiel hat sich geändert (z. B. neue Spezialaktion ausgelöst)
 let lastPowerStamp=null;
+let lastFreezeShown=null;
 function onGameChange(payload){
   const g=payload.new;
   // Wenn eine neue Aktion gestartet wurde, ankündigen
@@ -1072,11 +1113,15 @@ function onGameChange(payload){
     lastPowerStamp=g.power_until;
     if(g.power_kind && new Date(g.power_until)>new Date()){
       const onlyId = g.power_player || null;
-      // Freeze: nur die betroffenen Hunter bekommen die Eiswürfel-Meldung
+      // Freeze: betroffene Spieler (Hunter/Targets/alle) bekommen das große
+      // Eiswürfel-Modal mit Countdown. amIFrozen() liest Rolle + Person aus g.
       if(g.power_kind==="freeze"){
-        if(me && me.role==="hunter" && (!onlyId || onlyId===me.id)){
+        // game vorab lokal aktualisieren, damit amIFrozen die neuen Werte sieht
+        game=g;
+        if(amIFrozen()){
           const secs = g.power_secs || 60;
-          showModal(`Du bist eingefroren! Bleib ${secs} Sekunden stehen und beweg dich nicht.`, "🧊", "ice");
+          lastFreezeShown=g.power_until;
+          showFreezeModal(secs);
         }
         refreshAll();
         return;
@@ -1122,6 +1167,75 @@ function showModal(text, icon, mode){
   alertSignal();  // Ton + Vibration, damit man es auch in der Tasche merkt
 }
 window.closeModal=()=>{ $("modal").classList.add("hidden"); };
+
+// Großes Eiswürfel-Modal mit Countdown. Lässt sich erst schließen, wenn die
+// Zeit abgelaufen ist; schließt danach automatisch mit "Weiter geht's".
+let freezeCountdownInt=null;
+function showFreezeModal(secs){
+  clearInterval(freezeCountdownInt);
+  const box=$("modalBox"), x=$("modalX"), ok=$("modalOk");
+  box.classList.add("ice");
+  $("modalFrost").classList.remove("hidden");
+  $("modalIcon").textContent="🧊";
+  $("modal").classList.remove("hidden");
+  // Schließen sperren
+  if(x) x.style.display="none";
+  if(ok){ ok.disabled=true; ok.style.opacity=".5"; ok.textContent="Eingefroren …"; }
+  freezeSound();
+  try{ if(navigator.vibrate) navigator.vibrate([400,150,400,150,400]); }catch(e){}
+
+  const endAt=Date.now()+secs*1000;
+  const tick=()=>{
+    const left=Math.max(0,Math.ceil((endAt-Date.now())/1000));
+    $("modalText").textContent=`Du bist eingefroren! Bleib stehen und beweg dich nicht.\n\nNoch ${left} Sekunden …`;
+    if(left<=0){
+      clearInterval(freezeCountdownInt);
+      // Auftauen: kurz "Weiter geht's", dann automatisch schließen
+      $("modalIcon").textContent="✅";
+      $("modalText").textContent="Weiter geht's!";
+      box.classList.remove("ice");
+      $("modalFrost").classList.add("hidden");
+      if(ok){ ok.disabled=false; ok.style.opacity="1"; ok.textContent="Weiter"; }
+      if(x) x.style.display="";
+      try{ if(navigator.vibrate) navigator.vibrate(120); }catch(e){}
+      setTimeout(()=>{ closeModal(); }, 1800);
+    }
+  };
+  tick();
+  freezeCountdownInt=setInterval(tick,250);
+}
+
+// Frostiger Spezial-Ton: tiefes, langsam abfallendes "Knirschen/Glasklirren"
+function freezeSound(){
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    if(!Ctx) return;
+    const ctx=new Ctx();
+    const now=ctx.currentTime;
+    // 1) tiefer, abfallender Ton (das "Einfrieren")
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type="sine";
+    o.frequency.setValueAtTime(420,now);
+    o.frequency.exponentialRampToValueAtTime(80,now+0.9);
+    g.gain.setValueAtTime(0.0001,now);
+    g.gain.exponentialRampToValueAtTime(0.3,now+0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+1.0);
+    o.start(now); o.stop(now+1.05);
+    // 2) hohes "Glitzer/Kristall"-Klirren obendrauf
+    [1568,1865,2349].forEach((f,i)=>{
+      const oo=ctx.createOscillator(), gg=ctx.createGain();
+      oo.connect(gg); gg.connect(ctx.destination);
+      oo.type="triangle"; oo.frequency.value=f;
+      const t=now+0.05*i;
+      gg.gain.setValueAtTime(0.0001,t);
+      gg.gain.exponentialRampToValueAtTime(0.12,t+0.02);
+      gg.gain.exponentialRampToValueAtTime(0.0001,t+0.6);
+      oo.start(t); oo.stop(t+0.65);
+    });
+    setTimeout(()=>{ try{ctx.close();}catch(e){} }, 1300);
+  }catch(e){}
+}
 
 // Kurzes akustisches + haptisches Signal
 function alertSignal(){
@@ -1429,16 +1543,24 @@ window.power=async(kind)=>{
   await sb.from("games").update({power_kind:kind,power_player:onlyId||null,power_until:until}).eq("id",game.id);
 };
 
-// Spielleiter: Hunter einfrieren (alle oder einen einzelnen) – nur Eiswürfel-Meldung
-window.freezeHunters=async()=>{
+// Spielleiter: Spieler einfrieren – Hunter, Targets oder alle; einzeln oder ganze Gruppe.
+// Große Eiswürfel-Meldung mit Countdown beim Betroffenen.
+window.freezePlayers=async()=>{
   if(!isHost())return;
-  const sel=$("freezeTarget");
-  const onlyId = sel ? sel.value : "";
+  const role = $("freezeRole") ? $("freezeRole").value : "hunter";   // hunter | target | all
+  const onlyId = $("freezeTarget") ? $("freezeTarget").value : "";
   let secs=parseInt($("freezeSecs").value)||60;
   secs=Math.min(600,Math.max(10,secs));
   const until=new Date(Date.now()+secs*1000).toISOString();
-  await sb.from("games").update({power_kind:"freeze",power_player:onlyId||null,power_until:until,power_secs:secs}).eq("id",game.id);
-  const who = onlyId ? (players.find(p=>p.id===onlyId)?.name||"ein Hunter") : "alle Hunter";
+  await sb.from("games").update({
+    power_kind:"freeze", power_role:role, power_player:onlyId||null,
+    power_until:until, power_secs:secs
+  }).eq("id",game.id);
+  let who;
+  if(onlyId)            who = players.find(p=>p.id===onlyId)?.name || "ein Spieler";
+  else if(role==="all") who = "alle Spieler";
+  else if(role==="target") who = "alle Targets";
+  else                  who = "alle Hunter";
   showPopup("❄️ "+who+" eingefroren ("+secs+" Sek)","");
 };
 
@@ -1695,11 +1817,12 @@ let phaseWriteLock=null;
 async function autoPhase(left){
   if(!game.started_at) return;
   const head=(game.headstart_min||0)*60;
-  const endg=(game.endgame_min||0)*60;
+  // Endspiel startet IMMER bei 15 Min Restzeit – unabhängig von der Einstellung.
+  const endg=ENDGAME_SEC;
   const elapsed=(Date.now()-new Date(game.started_at))/1000;
   let want;
   if(left<=0) want="over";
-  else if(endg>0 && left<=endg) want="endgame";
+  else if(left<=endg) want="endgame";
   else if(head>0 && elapsed<head) want="headstart";
   else want="hunt";
   if(want!==game.phase && phaseWriteLock!==want){
@@ -1722,9 +1845,14 @@ window.startGame=async()=>{
     phase: firstPhase,
     join_open: false
   };
-  // Schrumpfende Zone: aktuellen Radius als Startwert merken (falls Feld schon gesetzt)
-  if(game.shrink_enabled && game.field_radius){
-    patch.shrink_start_radius = game.field_radius;
+  // Schrumpfende Zone: Startradius merken. Falls noch kein Feld-Radius in der DB
+  // steht, den aktuell gewählten Radius nehmen – sonst würde nie geschrumpft.
+  if(game.shrink_enabled){
+    const startR = game.field_radius || chosenRadius || null;
+    if(startR){
+      patch.shrink_start_radius = startR;
+      if(!game.field_radius) patch.field_radius = startR;
+    }
   }
   await sb.from("games").update(patch).eq("id",game.id);
 };
