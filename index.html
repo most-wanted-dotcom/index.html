@@ -374,8 +374,24 @@
       </div>
 
       <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">🃏 JOKER ZUWEISEN</div>
-      <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Gib einem Target einen Funkstille-Joker (oder nimm ihn wieder weg).</div>
-      <div id="jokerAssignList"></div>
+      <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Gib einer Person einen Joker. Sie löst ihn selbst aus, wann sie will. Mehrere Joker gleichzeitig möglich.</div>
+      <select id="jkKind" style="width:100%;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;margin-bottom:8px;">
+        <option value="freeze">❄️ Einfrieren</option>
+        <option value="reveal">🎯 Alle aufdecken (Moment)</option>
+        <option value="live">📡 Live-Standort (dauerhaft)</option>
+        <option value="silence">🔇 Funkstille (unsichtbar)</option>
+      </select>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <select id="jkWho" style="flex:1;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;">
+          <option value="">Person wählen…</option>
+        </select>
+        <input id="jkSecs" type="number" min="10" max="900" step="10" value="60" style="width:78px;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;" />
+        <span style="font-size:12px;color:var(--muted);">Sek</span>
+      </div>
+      <div class="power-grid">
+        <button onclick="assignJoker()" style="background:#2a1f3d;color:#c4a8ff;border-color:#7c4dff;">🃏 Joker geben</button>
+      </div>
+      <div id="jokerAssignList" style="margin-top:10px;"></div>
 
       <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">SPIELFELD-GRENZE</div>
       <div class="field-grid">
@@ -407,6 +423,8 @@
     <div id="geoLine" class="geo hidden"></div>
     <div id="leafletMap" class="map"></div>
     <button id="jokerBtn" class="joker-btn hidden" onclick="useJoker()">🃏 Funkstille-Joker (1 Min)</button>
+    <div id="myJokers"></div>
+    <div id="selfEffectBar" class="power-bar hidden" style="margin:0 16px 8px;"></div>
     <p class="hint">Hunter sehen die Targets nur alle 15 Min (Endspiel: 5 Min). Targets sehen die Hunter nicht – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.<br>📱 <b>Wichtig:</b> Lass das Display während des Spiels an. Die App hält den Bildschirm wach, aber bei wirklich schwarzem/gesperrtem Display friert das Handy die Standortübermittlung ein. Tipp: Bildschirm-Timeout im Handy hochstellen und das Gerät nicht sperren.</p>
   </div>
 
@@ -560,6 +578,30 @@ function amIFrozen(){
 }
 function isHost(){ return me && (me.role==="host" || (game && game.host_id && me.id===game.host_id)); }
 
+// ---------- Persönliche Joker (vom Spielleiter zugewiesen, von der Person selbst ausgelöst) ----------
+// Vorrat einer Person als Array lesen. Format: [{id, kind, secs}]
+function parseJokers(p){
+  if(!p || !p.jokers) return [];
+  try{ const a = typeof p.jokers==="string" ? JSON.parse(p.jokers) : p.jokers; return Array.isArray(a)?a:[]; }
+  catch(e){ return []; }
+}
+// Mein aktiver Eigen-Effekt (self_kind), solange self_until in der Zukunft liegt
+function mySelfEffect(){
+  if(!me || !me.self_kind || !me.self_until) return null;
+  return new Date(me.self_until)>new Date() ? me.self_kind : null;
+}
+function mySelfLeft(){
+  if(!me || !me.self_until) return 0;
+  return Math.max(0, Math.round((new Date(me.self_until)-new Date())/1000));
+}
+// Lesbare Namen/Icons der Joker-Typen
+const JOKER_INFO={
+  freeze:{label:"Einfrieren",icon:"❄️"},
+  reveal:{label:"Alle aufdecken",icon:"🎯"},
+  live:{label:"Live-Standort",icon:"📡"},
+  silence:{label:"Funkstille",icon:"🔇"}
+};
+
 // ---------- Spielfeld-Grenze ----------
 let chosenRadius=1000;       // gewählter Radius in Metern (Standard 1 km)
 let centerPickArmed=false;   // wartet der Host auf einen Karten-Tipp für den Mittelpunkt?
@@ -662,20 +704,29 @@ function renderHostControls(){
       pool.map(h=>`<option value="${h.id}">${esc(h.name)} (${h.role==="hunter"?"Hunter":"Target"})</option>`).join("");
     if([...ft.options].some(o=>o.value===cur)) ft.value=cur;
   }
-  // Joker-Zuweisung: pro Target ein Knopf (geben / wegnehmen)
+  // Personen-Dropdown für die Joker-Zuweisung (Targets + Hunter)
+  const jw=$("jkWho");
+  if(jw){
+    const cur=jw.value;
+    const pool=players.filter(p=>p.role!=="host");
+    jw.innerHTML='<option value="">Person wählen…</option>'+
+      pool.map(p=>`<option value="${p.id}">${esc(p.name)} (${p.role==="hunter"?"Hunter":"Target"})</option>`).join("");
+    if([...jw.options].some(o=>o.value===cur)) jw.value=cur;
+  }
+  // Übersicht: wer hat welche Joker im Vorrat? (mit Möglichkeit, einzelne zu entfernen)
   const jl=$("jokerAssignList");
   if(jl){
-    if(!targets.length){
-      jl.innerHTML='<div class="empty">Noch keine Targets im Spiel.</div>';
+    const pool=players.filter(p=>p.role!=="host");
+    const withJokers=pool.filter(p=>parseJokers(p).length>0);
+    if(!withJokers.length){
+      jl.innerHTML='<div style="font-size:11px;color:#55555c;">Noch keine Joker vergeben.</div>';
     }else{
-      jl.innerHTML=targets.map(t=>{
-        const has=!t.joker_used;   // joker_used=false → Joker verfügbar
-        const btn = has
-          ? `<button class="catch-btn" style="background:#3a1c1c;color:#ff7b72" onclick="assignJoker('${t.id}',false)">Wegnehmen</button>`
-          : `<button class="catch-btn" style="background:#1c2740;color:#7aa2f7" onclick="assignJoker('${t.id}',true)">Joker geben</button>`;
-        const state = has ? '<span class="tag" style="color:#7c4dff;border:1px solid #7c4dff55">🃏 verfügbar</span>'
-                          : '<span class="tag" style="color:#666;border:1px solid #6663">kein Joker</span>';
-        return `<div class="row"><span class="nm">${esc(t.name)}</span>${state}${btn}</div>`;
+      jl.innerHTML=withJokers.map(p=>{
+        const list=parseJokers(p).map(j=>{
+          const inf=JOKER_INFO[j.kind]||{label:j.kind,icon:"🃏"};
+          return `<span class="tag" style="color:#c4a8ff;border:1px solid #7c4dff55;margin:2px 4px 2px 0;display:inline-block;">${inf.icon} ${inf.label} ${j.secs}s <a onclick="removeJoker('${p.id}','${j.id}')" style="color:#ff7b72;cursor:pointer;margin-left:4px;">✕</a></span>`;
+        }).join("");
+        return `<div style="margin-bottom:8px;"><div style="font-weight:600;font-size:13px;">${esc(p.name)} <span style="color:#666;font-weight:400;">(${p.role==="hunter"?"Hunter":"Target"})</span></div><div style="margin-top:3px;">${list}</div></div>`;
       }).join("");
     }
   }
@@ -909,18 +960,78 @@ window.useJoker=async()=>{
 };
 function renderJoker(){
   const btn=$("jokerBtn");
-  if(!btn) return;
-  // Sichtbar für Targets, wenn der Joker im Spiel aktiviert ist ODER dem Target
-  // einer zugewiesen wurde (joker_used=false bedeutet: verfügbar).
-  const available = me && me.joker_used===false;
-  const show = me && me.role==="target" && game && (game.joker_enabled || available);
-  btn.classList.toggle("hidden", !show);
-  if(show){
-    const used = me.joker_used===true || jokerUsed;
-    btn.disabled = used;
-    btn.textContent = used ? "🃏 Joker bereits benutzt" : "🃏 Funkstille-Joker (1 Min)";
+  if(btn){
+    // Alter persönlicher Funkstille-Joker (nur Targets, über game.joker_enabled)
+    const available = me && me.joker_used===false;
+    const show = me && me.role==="target" && game && (game.joker_enabled || available);
+    btn.classList.toggle("hidden", !show);
+    if(show){
+      const used = me.joker_used===true || jokerUsed;
+      btn.disabled = used;
+      btn.textContent = used ? "🃏 Funkstille-Joker benutzt" : "🃏 Funkstille-Joker (1 Min)";
+    }
+  }
+  // Vom Spielleiter zugewiesene Joker als zusätzliche Knöpfe
+  const wrap=$("myJokers");
+  if(wrap){
+    const list = (me && me.role!=="host") ? parseJokers(me) : [];
+    const active = mySelfEffect();   // läuft gerade ein eigener Effekt?
+    wrap.innerHTML=list.map(j=>{
+      const inf=JOKER_INFO[j.kind]||{label:j.kind,icon:"🃏"};
+      const disabled = active ? "disabled" : "";
+      return `<button class="joker-btn" ${disabled} onclick="useAssignedJoker('${j.id}')">${inf.icon} ${inf.label} (${j.secs}s)</button>`;
+    }).join("");
+  }
+  // Anzeige des aktiven Eigen-Effekts mit Restzeit
+  const bar=$("selfEffectBar");
+  if(bar){
+    const eff=mySelfEffect();
+    if(eff && eff!=="reveal"){   // reveal ist nur ein Moment, keine Daueranzeige nötig
+      const inf=JOKER_INFO[eff]||{label:eff,icon:""};
+      bar.textContent=`${inf.icon} ${inf.label} aktiv · noch ${mySelfLeft()}s`;
+      bar.classList.remove("hidden");
+    }else{
+      bar.classList.add("hidden");
+    }
   }
 }
+
+// Person löst einen ihr zugewiesenen Joker selbst aus. Effekt wirkt nur für sie.
+window.useAssignedJoker=async(jokerId)=>{
+  if(!me) return;
+  if(mySelfEffect()){ showPopup("Es läuft schon ein Joker-Effekt.",""); return; }
+  const list=parseJokers(me);
+  const j=list.find(x=>x.id===jokerId);
+  if(!j) return;
+  const inf=JOKER_INFO[j.kind]||{label:j.kind,icon:"🃏"};
+  if(!confirm(`${inf.label} (${j.secs}s) jetzt einsetzen? Das geht nur einmal.`)) return;
+  // Joker aus dem Vorrat entfernen
+  const rest=list.filter(x=>x.id!==jokerId);
+  const until=new Date(Date.now()+j.secs*1000).toISOString();
+  const patch={ jokers: JSON.stringify(rest), self_kind:j.kind, self_until:until };
+  // Funkstille macht die Person zusätzlich für die Hunter unsichtbar (silent_until)
+  if(j.kind==="silence") patch.silent_until=until;
+  // reveal = Moment: nur kurz aktiv halten, der eigentliche Effekt ist das Sichtbarmachen
+  if(j.kind==="reveal"){
+    patch.self_until=new Date(Date.now()+10000).toISOString();
+    // Persönliche Momentaufnahme der aktuellen Target-Live-Positionen speichern
+    const snap=players.filter(p=>p.role==="target" && p.live_lat!=null)
+      .map(p=>({id:p.id,name:p.name,lat:p.live_lat,lng:p.live_lng}));
+    patch.reveal_snap=JSON.stringify(snap);
+  }
+  await sb.from("players").update(patch).eq("id",me.id);
+  // lokal sofort übernehmen
+  me.jokers=patch.jokers; me.self_kind=patch.self_kind; me.self_until=patch.self_until;
+  if(patch.silent_until) me.silent_until=patch.silent_until;
+  if(patch.reveal_snap) me.reveal_snap=patch.reveal_snap;
+  // Rückmeldung / Effekt-Anzeige
+  if(j.kind==="freeze"){ showFreezeModal(j.secs); }
+  else if(j.kind==="reveal"){ showModal("Du siehst jetzt kurz alle Target-Positionen (Momentaufnahme).", "🎯"); }
+  else if(j.kind==="live"){ showModal(`Live-Standort aktiv – du siehst die Targets ${j.secs}s lang durchgehend.`, "📡"); }
+  else if(j.kind==="silence"){ showModal(`Funkstille aktiv – du bist ${j.secs}s unsichtbar.`, "🔇"); }
+  renderJoker();
+  render();
+};
 
 function showErr(m){const e=$("loginErr");e.textContent=m;e.classList.remove("hidden");}
 
@@ -996,7 +1107,7 @@ async function joinGame(g,name,asHost){
   // kann ihn später einzeln zuweisen). Hunter/Host brauchen keinen.
   const startJokerUsed = !(role==="target" && g.joker_enabled);
   const {data,error}=await sb.from("players")
-    .insert({game_id:g.id,name,role,joker_used:startJokerUsed}).select().single();
+    .insert({game_id:g.id,name,role,joker_used:startJokerUsed,jokers:"[]"}).select().single();
   if(error){showErr("Beitritt fehlgeschlagen: "+error.message);return;}
   me=data;
   // Ersteller wird zusätzlich als Spielleiter (host_id) im Spiel vermerkt
@@ -1416,6 +1527,14 @@ function render(){
   const personalSilent = (p)=> p.silent_until && new Date(p.silent_until)>new Date();
   // Globale Funkstille blendet ein Target nur aus, wenn die Aktion dieses Target betrifft
   const globalSilentFor = (p)=> silence && powerAffectsTarget(p.id);
+  // Mein persönlicher Eigen-Effekt (vom selbst ausgelösten Joker)
+  const selfEff = mySelfEffect();                  // "live" | "reveal" | "silence" | "freeze" | null
+  const iSeeLive = selfEff==="live";               // Targets live sehen
+  const iSeeReveal = selfEff==="reveal";           // eingefrorene Momentaufnahme sehen
+  let revealSnap=[];
+  if(iSeeReveal && me.reveal_snap){
+    try{ revealSnap = typeof me.reveal_snap==="string" ? JSON.parse(me.reveal_snap) : me.reveal_snap; }catch(e){ revealSnap=[]; }
+  }
   let visible;
   if(me.role==="host"){
     // Host sieht alle Nicht-Host – und sich selbst, sobald er seinen Standort aktiviert hat
@@ -1425,15 +1544,17 @@ function render(){
     // Bei Funkstille (für dieses Target) ODER aktivem Joker verschwinden Targets von der Hunter-Karte
     visible = players.filter(p=>p.role!=="host" && !((globalSilentFor(p)||personalSilent(p)) && p.role==="target"));
   }
-  else                        visible = players.filter(p=>p.role==="target");
-  // Host: Live-Koordinate für alle. Andere: freigegebene (verzögerte) Koordinate –
-  // ABER den EIGENEN Punkt sieht jeder live (über myLat/myLng).
+  else {
+    visible = players.filter(p=>p.role==="target");
+  }
   const useLive = me.role==="host";
-  const withGeo = visible
+  let withGeo = visible
     .map(p=>{
       let lat, lng;
       if(p.id===me.id && myLat!=null){      // mein eigener Standort: immer live
         lat=myLat; lng=myLng;
+      } else if(iSeeLive && p.role==="target"){
+        lat=p.live_lat; lng=p.live_lng;     // Live-Joker: Targets laufend live
       } else {
         lat = useLive ? p.live_lat : p.lat;
         lng = useLive ? p.live_lng : p.lng;
@@ -1441,6 +1562,16 @@ function render(){
       return (lat!=null) ? {...p, lat, lng} : null;
     })
     .filter(Boolean);
+  // reveal-Joker: eingefrorene Momentaufnahme der Targets dazunehmen/überschreiben
+  if(iSeeReveal && revealSnap.length){
+    const byId={};
+    withGeo.forEach(p=>byId[p.id]=p);
+    revealSnap.forEach(s=>{
+      const base=players.find(p=>p.id===s.id) || {id:s.id,name:s.name,role:"target"};
+      byId[s.id]={...base, lat:s.lat, lng:s.lng};
+    });
+    withGeo=Object.values(byId);
+  }
   drawMarkers(withGeo);
   drawField();
 
@@ -1702,10 +1833,31 @@ window.freezePlayers=async()=>{
 };
 
 // Spielleiter: einem Target einen Joker geben oder wegnehmen
-window.assignJoker=async(id,give)=>{
+// Spielleiter: einer Person einen Joker in den Vorrat legen (Typ + Dauer)
+window.assignJoker=async()=>{
   if(!isHost())return;
-  // give=true → Joker freischalten (joker_used=false); give=false → als benutzt markieren (sperren)
-  await sb.from("players").update({joker_used: !give}).eq("id",id);
+  const kind=$("jkKind").value;
+  const who=$("jkWho").value;
+  let secs=parseInt($("jkSecs").value)||60;
+  secs=Math.min(900,Math.max(10,secs));
+  if(!who){ alert("Bitte zuerst eine Person auswählen."); return; }
+  const p=players.find(x=>x.id===who);
+  if(!p){ alert("Person nicht gefunden."); return; }
+  const list=parseJokers(p);
+  const jid=Math.random().toString(36).slice(2,9);
+  list.push({id:jid, kind, secs});
+  await sb.from("players").update({jokers: JSON.stringify(list)}).eq("id",who);
+  const inf=JOKER_INFO[kind]||{label:kind};
+  showPopup(`${inf.label} (${secs}s) an ${p.name} vergeben ✓`,"");
+  await refreshAll();
+};
+// Spielleiter: einen einzelnen Joker aus dem Vorrat einer Person entfernen
+window.removeJoker=async(playerId,jokerId)=>{
+  if(!isHost())return;
+  const p=players.find(x=>x.id===playerId);
+  if(!p) return;
+  const list=parseJokers(p).filter(j=>j.id!==jokerId);
+  await sb.from("players").update({jokers: JSON.stringify(list)}).eq("id",playerId);
   await refreshAll();
 };
 
