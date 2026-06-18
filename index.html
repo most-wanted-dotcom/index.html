@@ -505,6 +505,16 @@ function activePower(){
   if(!game||!game.power_kind||!game.power_until) return null;
   return new Date(game.power_until) > new Date() ? game.power_kind : null;
 }
+// Sekunden, die der Vorsprung (Headstart) noch läuft – oder null, wenn kein Vorsprung
+// mehr aktiv ist. Beruht auf der verstrichenen Spielzeit seit Start.
+function headstartLeft(){
+  if(!game || !game.started_at) return null;
+  const head=(game.headstart_min||0)*60;
+  if(head<=0) return null;
+  const elapsed=(Date.now()-new Date(game.started_at))/1000;
+  const left=Math.round(head-elapsed);
+  return left>0 ? left : null;
+}
 // Betrifft die aktuelle Aktion ein bestimmtes Target? (für Funkstille/Live je Spieler)
 // power_player leer/null = gilt für alle Targets.
 function powerAffectsTarget(playerId){
@@ -1697,6 +1707,9 @@ function startPingLoop(){
       if(hunterRenderTick===0){ try{ render(); }catch(e){} }
     }
     if(!geoActivated||myLat==null) return;
+    // Nach Spielende keine Standortübermittlung mehr
+    const gameOver = game && game.ends_at && (new Date(game.ends_at)-new Date() <= 0 || game.phase==="over");
+    if(gameOver) return;
     // alle 20 Sek live an den Spielleiter
     if(Date.now()/1000-lastLiveAt >= LIVE_EVERY) sendLive();
     // Freigabe an die Hunter: immer wenn ein neues Ping-Fenster beginnt (Countdown ~ Intervall)
@@ -1758,11 +1771,31 @@ function startTimer(){
 
     // Spielleiter sieht groß die Gesamt-Spielzeit (er hat ja Live-Überblick)
     if(isHost()){
+      // SPIEL VORBEI: keine laufende Zeit mehr anzeigen
+      if(left<=0 || game.phase==="over"){
+        autoPhase(left);  // Phase auf "over" setzen
+        $("pingLabel").style.display="";
+        $("pingLabel").textContent="Spiel vorbei";
+        $("timer").textContent="🏁";
+        $("timer").style.fontSize="40px";
+        $("timer").style.color="var(--text)";
+        $("totalTime").textContent="Das Spiel ist vorbei – die Sieger stehen fest.";
+        if(left <= -3600){
+          await purgeGameData();
+          clearSession();
+          alert("Das Spiel ist beendet. Alle Spiel- und Standortdaten wurden gelöscht.");
+          location.reload();
+        }
+        return;
+      }
       $("pingLabel").style.display="";
       $("pingLabel").textContent="Spielzeit übrig";
       $("timer").textContent=left>0?fmt(left):"00:00:00";
       $("timer").style.color=left<3600?"var(--orange)":"var(--text)";
-      $("totalTime").textContent="Du steuerst das Spiel – Live-Standorte alle 20 Sek.";
+      const hsHost=headstartLeft();
+      $("totalTime").textContent = (hsHost!=null && game.phase==="headstart")
+        ? ("🏃 Vorsprung läuft – noch "+fmt(hsHost).slice(3)+" (MM:SS)")
+        : "Du steuerst das Spiel – Live-Standorte alle 20 Sek.";
       autoPhase(left);
       // Schrumpfende Zone: prüfen/ausführen (verstrichene Spielzeit in Sek)
       if(game.started_at){
@@ -1779,8 +1812,34 @@ function startTimer(){
       return;
     }
 
+    // SPIEL VORBEI: keine Countdowns mehr – nur noch die Sieger-Meldung
+    if(left<=0 || game.phase==="over"){
+      $("pingLabel").style.display="";
+      $("pingLabel").textContent="Spiel vorbei";
+      $("timer").textContent="🏁";
+      $("timer").style.fontSize="40px";
+      $("timer").style.color="var(--text)";
+      $("totalTime").textContent="Das Spiel ist vorbei – die Sieger stehen fest.";
+      // Datenschutz-Schließung nach 1 Std weiterhin prüfen
+      if(left <= -3600){
+        await clearMyLocation();
+        clearSession();
+        alert("Das Spiel ist beendet. Die Sitzung wird geschlossen und die Daten gelöscht.");
+        location.reload();
+      }
+      return;
+    }
+
+    // GROSS: Während des Vorsprungs zeigt der Timer, wie lange der Vorsprung noch läuft
+    const hsLeft=headstartLeft();
+    if(hsLeft!=null && game.phase==="headstart"){
+      $("pingLabel").style.display="";
+      $("pingLabel").textContent = me.role==="hunter" ? "Start frei in (Vorsprung)" : "Vorsprung – lauf los!";
+      $("timer").textContent=fmt(hsLeft).slice(3); // MM:SS
+      $("timer").style.color="#3b82f6";
+    }
     // GROSS: Ping-Countdown (wann der nächste Standort an die Hunter geht)
-    if(activePower()==="silence"){
+    else if(activePower()==="silence"){
       $("pingLabel").style.display="";
       $("pingLabel").textContent="Funkstille – keine Übermittlung";
       $("timer").textContent="🔇";
