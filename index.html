@@ -511,7 +511,7 @@ function amIFrozen(){
   if(activePower()!=="freeze") return false;
   return !game.power_player || game.power_player===me.id;
 }
-function isHost(){ return me && me.role==="host"; }
+function isHost(){ return me && (me.role==="host" || (game && game.host_id && me.id===game.host_id)); }
 
 // ---------- Spielfeld-Grenze ----------
 let chosenRadius=1000;       // gewählter Radius in Metern (Standard 1 km)
@@ -911,10 +911,47 @@ async function restoreSession(){
   try{ saved=JSON.parse(localStorage.getItem("mw_session")||"null"); }catch(e){}
   if(!saved||!saved.gameId||!saved.playerId) return false;
   if(!sb) sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-  // Prüfen, ob Spiel und Spieler noch existieren
-  const {data:g}=await sb.from("games").select().eq("id",saved.gameId).maybeSingle();
-  const {data:p}=await sb.from("players").select().eq("id",saved.playerId).maybeSingle();
-  if(!g||!p){ clearSession(); return false; }
+
+  // 1) Spiel laden. Nur wenn das Spiel bei einem klaren "nicht gefunden" fehlt,
+  //    ist die Sitzung wirklich ungültig.
+  const gRes=await sb.from("games").select().eq("id",saved.gameId).maybeSingle();
+  if(gRes.error){
+    showErr("Verbindung gerade nicht möglich. Bitte gleich nochmal neu laden – deine Sitzung bleibt erhalten.");
+    return false;
+  }
+  if(!gRes.data){ clearSession(); return false; }   // Spiel existiert nicht mehr
+  const g=gRes.data;
+
+  // 2) Eigenen Spieler laden. Direkter Treffer per ID …
+  let p=null;
+  const pRes=await sb.from("players").select().eq("id",saved.playerId).maybeSingle();
+  if(pRes.error){
+    showErr("Verbindung gerade nicht möglich. Bitte gleich nochmal neu laden – deine Sitzung bleibt erhalten.");
+    return false;
+  }
+  p=pRes.data;
+
+  // … falls der Direkt-Treffer leer ist (z. B. RLS/Timing), in der kompletten
+  //    Spielerliste nachsehen.
+  if(!p){
+    const listRes=await sb.from("players").select().eq("game_id",saved.gameId);
+    if(!listRes.error && listRes.data){
+      p=listRes.data.find(x=>x.id===saved.playerId)||null;
+    }
+  }
+
+  // 3) Immer noch nicht gefunden? Wenn ich laut Spiel der Spielleiter bin
+  //    (host_id == meine gespeicherte playerId), Sitzung NICHT verwerfen,
+  //    sondern als Host weiterarbeiten. So verliert der Spielleiter den Zugang nicht.
+  if(!p){
+    if(g.host_id && g.host_id===saved.playerId){
+      p={ id:saved.playerId, game_id:saved.gameId, name:"Spielleiter", role:"host" };
+    }else{
+      clearSession();
+      return false;
+    }
+  }
+
   game=g; me=p; chosenRole=p.role;
   enterGame();
   return true;
@@ -930,8 +967,13 @@ async function refreshAll(){
     sb.from("chat").select().eq("game_id",game.id).order("created_at").then(r=>r,()=>({data:[]})),
   ]);
   if(g)game=g; players=pl||[]; sightings=si||[]; chatMsgs=ch||[];
-  // Eigenen Spieler-Datensatz aktualisieren (z. B. wenn der Host einen Joker zuweist)
-  if(me){ const fresh=players.find(p=>p.id===me.id); if(fresh) me=fresh; }
+  // Eigenen Spieler-Datensatz aktualisieren (z. B. wenn der Host einen Joker zuweist).
+  // WICHTIG: me NIE verlieren – nur ersetzen, wenn der eigene Datensatz wirklich
+  // gefunden wurde UND dieselbe Rolle hat. Sonst bleibt me unverändert bestehen.
+  if(me && players.length){
+    const fresh=players.find(p=>p.id===me.id);
+    if(fresh && fresh.role===me.role) me=fresh;
+  }
   render();
 }
 
