@@ -243,14 +243,6 @@
     <div style="font-size:11px;color:#55555c;margin-top:6px;">So lange dauert das Finale am Ende. In dieser Zeit wird der Standort alle 5 Min statt alle 15 Min übermittelt. Beispiel: 15 = die letzten 15 Minuten sind das Finale.</div>
   </div>
   <div class="field">
-    <label>WARN-DISTANZ</label>
-    <div class="role-pick">
-      <button id="d500" class="on-target">500 m</button>
-      <button id="d1000">1000 m</button>
-    </div>
-    <div style="font-size:11px;color:#55555c;margin-top:6px;">Targets werden gewarnt, wenn ein Hunter näher kommt.</div>
-  </div>
-  <div class="field">
     <label>FUNKSTILLE-JOKER FÜR TARGETS</label>
     <div class="role-pick">
       <button id="jokerOn" class="on-target">An (1 Min)</button>
@@ -1952,7 +1944,14 @@ window.startGame=async()=>{
     started_at: now.toISOString(),
     ends_at: new Date(now.getTime()+dur).toISOString(),
     phase: firstPhase,
-    join_open: false
+    join_open: false,
+    // Spezialaktionen zurücksetzen, damit kein alter "live"-Modus aus einem
+    // früheren Test die Standort-Freigabe sofort dauerhaft aktiviert.
+    power_kind: null,
+    power_until: null,
+    power_player: null,
+    power_role: null,
+    power_secs: null
   };
   // Schrumpfende Zone: Startradius merken. Falls noch kein Feld-Radius in der DB
   // steht, den aktuell gewählten Radius nehmen – sonst würde nie geschrumpft.
