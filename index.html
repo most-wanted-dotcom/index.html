@@ -1747,20 +1747,31 @@ function startPingLoop(){
     if(gameOver) return;
     // alle 20 Sek live an den Spielleiter
     if(Date.now()/1000-lastLiveAt >= LIVE_EVERY) sendLive();
-    // Freigabe an die Hunter: erst wenn ein Ping-Fenster WIRKLICH abgelaufen ist.
-    // Beispiel 15-Min-Phase: Position wird zu Minute 15, 30, 45 ... freigegeben –
-    // NICHT zu Spielbeginn. Zwischen den Pings bleibt der Marker eingefroren.
-    const iv=pingInterval();
-    if(iv<1e8 && game.started_at && game.phase!=="headstart"){
-      const elapsed=(Date.now()-new Date(game.started_at))/1000;
-      const windowIndex=Math.floor(elapsed/iv);          // 0 = erstes Fenster läuft noch
-      // Beim ersten Durchlauf merken wir uns das aktuelle Fenster, OHNE freizugeben.
-      if(lastReleaseWindow<0){
-        lastReleaseWindow=windowIndex;
-      } else if(windowIndex>lastReleaseWindow){
-        // Ein Fenster ist abgelaufen → jetzt die aktuelle Position freigeben
-        lastReleaseWindow=windowIndex;
-        releaseLocation();
+
+    // ---- Standort-Freigabe an die Hunter ----
+    // Regel: Beim Start der Jagd (direkt NACH dem Vorsprung) sofort EIN Ping.
+    // Dieser Punkt bleibt eingefroren, danach genau alle 15 Min ein weiterer Ping
+    // (im Finale alle 5 Min). Das Raster zählt ab Jagd-Beginn, nicht ab Spielstart.
+    if(game.started_at && game.phase!=="headstart" && !gameOver){
+      const iv=pingInterval();                       // 900 (normal) bzw. 300 (Finale)
+      if(iv<1e8){
+        const head=(game.headstart_min||0)*60;
+        const huntStart=new Date(game.started_at).getTime()+head*1000;  // Jagd-Beginn
+        const sinceHunt=(Date.now()-huntStart)/1000;                    // Sek seit Jagd-Beginn
+        // Beim Phasenwechsel wurde lastReleaseWindow auf -1 gesetzt:
+        // -> sofort EIN Ping, dann das Fenster merken.
+        if(sinceHunt>=0){
+          const windowIndex=Math.floor(sinceHunt/iv);
+          if(lastReleaseWindow<0){
+            // Erster Tick dieser Phase: sofort einmal freigeben (der Moment-Ping)
+            releaseLocation();
+            lastReleaseWindow=windowIndex;
+          } else if(windowIndex>lastReleaseWindow){
+            // Volles Fenster (15 bzw. 5 Min) abgelaufen -> nächster Moment-Ping
+            lastReleaseWindow=windowIndex;
+            releaseLocation();
+          }
+        }
       }
     }
     updateGeoLine();
