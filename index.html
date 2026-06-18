@@ -272,6 +272,26 @@
     </div>
     <div style="font-size:11px;color:#55555c;margin-top:6px;">Ein Target wird gewarnt, sobald ein Hunter näher als dieser Abstand ist. Frei wählbar vor Spielbeginn.</div>
   </div>
+  <div class="field">
+    <label>SPIELRADIUS (FELDGRÖSSE)</label>
+    <div class="role-pick" id="cradPick">
+      <button data-r="500">0,5 km</button>
+      <button data-r="1000" class="on-target">1 km</button>
+      <button data-r="2500">2,5 km</button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+      <span style="font-size:12px;color:var(--muted);">oder eigener Wert:</span>
+      <input id="cradFree" type="number" min="0.1" step="0.1" placeholder="z. B. 1,5" style="width:110px;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:10px;border-radius:9px;" />
+      <span style="font-size:12px;color:var(--muted);">km</span>
+    </div>
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">Das ist der Start-Radius des Spielfelds.</div>
+    <div style="display:flex;gap:8px;align-items:center;margin:10px 0 6px;">
+      <span style="font-size:12px;color:var(--muted);font-weight:600;flex:1;">📍 Tippe auf die Karte, um den Mittelpunkt zu setzen</span>
+      <button type="button" id="cfgLocate" class="addbtn" style="width:auto;padding:0 12px;">Mein Standort</button>
+    </div>
+    <div id="cfgMap" class="map" style="height:240px;"></div>
+    <div id="cfgCenterInfo" style="font-size:11px;color:#55555c;margin-top:6px;">Noch kein Mittelpunkt gesetzt.</div>
+  </div>
   <button id="btnCreateGo" class="primary">Spiel erstellen & Lobby öffnen</button>
   <button id="btnCfgBack" class="ghostlink">Zurück</button>
 </div>
@@ -544,6 +564,40 @@ function isHost(){ return me && (me.role==="host" || (game && game.host_id && me
 let chosenRadius=1000;       // gewählter Radius in Metern (Standard 1 km)
 let centerPickArmed=false;   // wartet der Host auf einen Karten-Tipp für den Mittelpunkt?
 let outsideState=false;      // ist das Target gerade außerhalb? (für einmalige Warnung)
+let chosenCenter=null;       // im Erstellen-Formular gewählter Mittelpunkt {lat,lng}
+let cfgMap=null, cfgCircle=null, cfgMarker=null, cfgMapDone=false;
+
+// Karte im Erstellen-Formular: tippen setzt den Mittelpunkt, Kreis zeigt den Radius
+function initCfgMap(){
+  if(cfgMapDone) return;
+  if(typeof L==="undefined") return;
+  const el=document.getElementById("cfgMap");
+  if(!el) return;
+  cfgMap=L.map("cfgMap",{zoomControl:true,attributionControl:true}).setView([49.4875,8.466],12); // Mannheim als Start
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(cfgMap);
+  cfgMap.on("click",(e)=>{ setCfgCenter(e.latlng.lat,e.latlng.lng); });
+  cfgMapDone=true;
+  setTimeout(()=>cfgMap.invalidateSize(),250);
+}
+// Mittelpunkt im Formular setzen + Kreis/Marker aktualisieren
+function setCfgCenter(lat,lng){
+  chosenCenter={lat,lng};
+  if(!cfgMap) return;
+  if(cfgMarker) cfgMarker.setLatLng([lat,lng]);
+  else cfgMarker=L.marker([lat,lng]).addTo(cfgMap);
+  drawCfgCircle();
+  const info=$("cfgCenterInfo");
+  if(info) info.innerHTML=`✓ Mittelpunkt gesetzt · Radius ${(chosenRadius/1000).toFixed(1)} km`;
+}
+// Kreis mit aktuellem Radius zeichnen/aktualisieren
+function drawCfgCircle(){
+  if(!cfgMap || !chosenCenter) return;
+  if(cfgCircle) cfgCircle.setLatLng([chosenCenter.lat,chosenCenter.lng]).setRadius(chosenRadius);
+  else cfgCircle=L.circle([chosenCenter.lat,chosenCenter.lng],{radius:chosenRadius,color:"#ff7a18",fillColor:"#ff7a18",fillOpacity:.12,weight:2}).addTo(cfgMap);
+  // Karte so zoomen, dass der Kreis gut sichtbar ist
+  try{ cfgMap.fitBounds(cfgCircle.getBounds().pad(0.2)); }catch(e){}
+}
+
 
 window.setRadius=(m)=>{
   chosenRadius=m;
@@ -802,6 +856,43 @@ $("rHunter").onclick=()=>{chosenRole="hunter";$("rHunter").className="on-hunter"
 }
 $("jokerOn").onclick=()=>{chosenJoker=true;$("jokerOn").className="on-target";$("jokerOff").className="";};
 $("jokerOff").onclick=()=>{chosenJoker=false;$("jokerOff").className="on-target";$("jokerOn").className="";};
+
+// Spielradius im Erstellen-Formular (setzt chosenRadius, das beim Start verwendet wird)
+[...document.querySelectorAll("#cradPick button")].forEach(b=>{
+  b.onclick=()=>{
+    chosenRadius=parseInt(b.dataset.r)||1000;
+    document.querySelectorAll("#cradPick button").forEach(x=>x.className="");
+    b.className="on-target";
+    const c=$("cradFree"); if(c) c.value="";
+    drawCfgCircle();  // Kreis live anpassen
+    if(chosenCenter){ const info=$("cfgCenterInfo"); if(info) info.innerHTML=`✓ Mittelpunkt gesetzt · Radius ${(chosenRadius/1000).toFixed(1)} km`; }
+  };
+});
+{ const c=$("cradFree"); if(c) c.oninput=()=>{
+    const km=parseFloat(c.value);
+    if(km && km>=0.1){
+      chosenRadius=Math.round(km*1000);
+      document.querySelectorAll("#cradPick button").forEach(x=>x.className="");
+      drawCfgCircle();
+      if(chosenCenter){ const info=$("cfgCenterInfo"); if(info) info.innerHTML=`✓ Mittelpunkt gesetzt · Radius ${(chosenRadius/1000).toFixed(1)} km`; }
+    }
+  };
+}
+// "Mein Standort" – Karte auf die eigene Position zentrieren und als Mittelpunkt setzen
+{ const lb=$("cfgLocate"); if(lb) lb.onclick=()=>{
+    if(!navigator.geolocation){ alert("Standort wird von diesem Gerät nicht unterstützt."); return; }
+    lb.textContent="…"; lb.disabled=true;
+    navigator.geolocation.getCurrentPosition((pos)=>{
+      const la=pos.coords.latitude, ln=pos.coords.longitude;
+      if(cfgMap) cfgMap.setView([la,ln],14);
+      setCfgCenter(la,ln);
+      lb.textContent="Mein Standort"; lb.disabled=false;
+    },()=>{
+      alert("Standort konnte nicht ermittelt werden. Bitte im Browser erlauben.");
+      lb.textContent="Mein Standort"; lb.disabled=false;
+    },{enableHighAccuracy:true,timeout:10000});
+  };
+}
 $("shrinkOn").onclick=()=>{chosenShrink=true;$("shrinkOn").className="on-target";$("shrinkOff").className="";};
 $("shrinkOff").onclick=()=>{chosenShrink=false;$("shrinkOff").className="on-target";$("shrinkOn").className="";};
 
@@ -838,6 +929,8 @@ $("btnCreate").onclick=()=>{
   if(!guard())return;
   $("login").classList.add("hidden");
   $("config").classList.remove("hidden");
+  // Karte im Erstellen-Formular aufbauen (kurze Verzögerung, bis sichtbar)
+  setTimeout(()=>{ initCfgMap(); }, 100);
 };
 $("btnCfgBack").onclick=()=>{
   $("config").classList.add("hidden");
@@ -861,7 +954,10 @@ $("btnCreateGo").onclick=async()=>{
     headstart_min: headMin,
     endgame_min: endMin,
     joker_enabled: chosenJoker,
-    shrink_enabled: chosenShrink
+    shrink_enabled: chosenShrink,
+    field_radius: chosenRadius,
+    field_lat: chosenCenter ? chosenCenter.lat : null,
+    field_lng: chosenCenter ? chosenCenter.lng : null
   }).select().single();
   if(error){alert("Fehler: "+error.message);return;}
   chosenRole="host";
@@ -1321,7 +1417,10 @@ function render(){
   // Globale Funkstille blendet ein Target nur aus, wenn die Aktion dieses Target betrifft
   const globalSilentFor = (p)=> silence && powerAffectsTarget(p.id);
   let visible;
-  if(me.role==="host")        visible = players.filter(p=>p.role!=="host");
+  if(me.role==="host"){
+    // Host sieht alle Nicht-Host – und sich selbst, sobald er seinen Standort aktiviert hat
+    visible = players.filter(p=>p.role!=="host" || (p.id===me.id && myLat!=null));
+  }
   else if(me.role==="hunter"){
     // Bei Funkstille (für dieses Target) ODER aktivem Joker verschwinden Targets von der Hunter-Karte
     visible = players.filter(p=>p.role!=="host" && !((globalSilentFor(p)||personalSilent(p)) && p.role==="target"));
@@ -1385,8 +1484,9 @@ function render(){
   const sel=$("tipTarget"); const cur=sel.value;
   sel.innerHTML='<option value="">Wer wurde gesehen?</option>'+targets.map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join("");
   sel.value=cur;
-  // Spielleiter muss keinen Standort teilen (schaut nur zu)
-  $("btnLive").style.display = me.role==="host" ? "none" : "";
+  // Standort-Knopf für alle sichtbar – der Spielleiter kann seinen Standort
+  // optional aktivieren, um sich selbst auf der Karte zu sehen.
+  $("btnLive").style.display = "";
   renderJoker();
 
   // Sichtungen
