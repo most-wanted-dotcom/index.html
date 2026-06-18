@@ -886,9 +886,10 @@ function checkProximity(){
   checkField();
   // Annäherungs-Warnung nur für Targets
   if(!me || me.role!=="target" || myLat==null || me.caught) return;
-  // Während des Vorsprungs (Headstart) noch KEINE Annäherungs-Warnung – erst wenn
-  // die Jagd begonnen hat. So fliehen die Targets ungestört.
-  if(headstartLeft()!=null || game.phase==="headstart") return;
+  // Nur warnen, wenn die JAGD wirklich läuft – nicht in Lobby/Vorsprung/nach Spielende.
+  if(!game || !game.started_at) return;
+  if(game.phase!=="hunt" && game.phase!=="endgame") return;
+  if(headstartLeft()!=null) return;   // zusätzlicher Schutz während des Vorsprungs
   const warn=(game && game.warn_dist) ? game.warn_dist : 500;
   const reset=warn*1.5;  // erst wieder warnen, wenn Hunter sich deutlich entfernt hat
   players.filter(p=>p.role==="hunter" && p.live_lat!=null).forEach(h=>{
@@ -1498,15 +1499,17 @@ function onGameChange(payload){
               : `📡 Du siehst jetzt ${durTxt} lang ALLE Targets live!`;
           else if(kind==="reveal")
             text = oneName
-              ? `🎯 Aufdeckung: ${oneName} ist jetzt auf deiner Karte sichtbar!`
-              : `🎯 Aufdeckung: Alle Targets sind jetzt auf deiner Karte sichtbar!`;
+              ? `🎯 Aufdeckung (Momentaufnahme): ${oneName} ist jetzt auf deiner Karte – bleibt bis zum nächsten regulären Standort.`
+              : `🎯 Aufdeckung (Momentaufnahme): Alle Targets sind jetzt auf deiner Karte – bleibt bis zum nächsten regulären Standort.`;
           else if(kind==="silence")
-            text = `🔇 Funkstille: Ein Target ist ${durTxt} lang nicht zu sehen.`;
+            text = oneName
+              ? `🔇 Funkstille: ${oneName} ist ${durTxt} lang nicht zu sehen.`
+              : `🔇 Funkstille: Die Targets sind ${durTxt} lang nicht zu sehen.`;
         } else if(me.role==="target"){
           if(kind==="live")
             text = `📡 Dein Live-Standort ist jetzt ${durTxt} lang für die Hunter freigegeben!`;
           else if(kind==="reveal")
-            text = `🎯 Dein Standort wurde gerade für die Hunter aufgedeckt!`;
+            text = `🎯 Dein Standort wurde gerade für die Hunter aufgedeckt (Momentaufnahme – bleibt bis zum nächsten regulären Standort).`;
           else if(kind==="silence")
             text = `🔇 Funkstille: Du bist jetzt ${durTxt} lang für die Hunter unsichtbar.`;
         }
