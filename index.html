@@ -1677,12 +1677,13 @@ async function requestWakeLock(){
 document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState!=="visible"){ wakeActive=false; return; }
   if(geoActivated){ requestWakeLock(); }
-  // Einmalige frische Ortung anstoßen, damit der Standort nach der Pause aktuell ist
+  // Einmalige frische Ortung anstoßen, damit der Standort nach der Pause aktuell ist.
+  // WICHTIG: nur die Live-Position an den Spielleiter senden – NICHT für die Hunter
+  // freigeben. Die Freigabe passiert ausschließlich im 15-/5-Min-Takt.
   if(geoActivated && navigator.geolocation){
     navigator.geolocation.getCurrentPosition((pos)=>{
       myLat=pos.coords.latitude; myLng=pos.coords.longitude;
       sendLive();
-      try{ if(typeof releaseLocation==="function") releaseLocation(); }catch(e){}
     },()=>{},{enableHighAccuracy:true,maximumAge:0,timeout:15000});
   }
   // Spielstand auffrischen, falls während der Pause etwas passiert ist
