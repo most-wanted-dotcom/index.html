@@ -723,6 +723,10 @@ function renderHostControls(){
     const cur=jw.value;
     const pool=players.filter(p=>p.role!=="host");
     jw.innerHTML='<option value="">Person wählen…</option>'+
+      '<option value="all">👥 Alle Spieler</option>'+
+      '<option value="all-target">🎯 Alle Targets</option>'+
+      '<option value="all-hunter">🥷 Alle Hunter</option>'+
+      '<option value="" disabled>──────────</option>'+
       pool.map(p=>`<option value="${p.id}">${esc(p.name)} (${p.role==="hunter"?"Hunter":"Target"})</option>`).join("");
     if([...jw.options].some(o=>o.value===cur)) jw.value=cur;
   }
@@ -1376,7 +1380,10 @@ function displayMessage(m){
   }
   if(me.role==="host"){
     if(m.audience==="host"){
-      const icon = m.text.includes("das Spiel verlassen") ? "🚪" : "🚫";
+      let icon="🚫";
+      if(m.text.includes("das Spiel verlassen")) icon="🚪";
+      else if(m.text.includes("geschnappt")) icon="🎯";
+      else if(m.text.includes("außerhalb")) icon="🚧";
       showModal(m.text, icon);
     }
     return;
@@ -1818,6 +1825,16 @@ window.toggleCaught=async(id,cur)=>{
   // Beim Schnappen den Zeitpunkt merken (für die Endabrechnung); beim Freigeben löschen
   const patch = cur ? {caught:false, caught_at:null} : {caught:true, caught_at:new Date().toISOString()};
   await sb.from("players").update(patch).eq("id",id);
+  // Beim Schnappen: deutliche Meldung an den Spielleiter
+  if(!cur){
+    const t=players.find(p=>p.id===id);
+    const tName=t ? t.name : "Ein Target";
+    const byName = me ? me.name : "Ein Hunter";
+    try{
+      await sb.from("messages").insert({game_id:game.id,audience:"host",
+        text:`🎯 ${tName} wurde von ${byName} geschnappt!`});
+    }catch(e){}
+  }
 };
 
 $("btnTip").onclick=async()=>{
@@ -1901,15 +1918,31 @@ window.assignJoker=async()=>{
   const who=$("jkWho").value;
   let secs=parseInt($("jkSecs").value)||60;
   secs=Math.min(900,Math.max(10,secs));
-  if(!who){ alert("Bitte zuerst eine Person auswählen."); return; }
-  const p=players.find(x=>x.id===who);
-  if(!p){ alert("Person nicht gefunden."); return; }
-  const list=parseJokers(p);
-  const jid=Math.random().toString(36).slice(2,9);
-  list.push({id:jid, kind, secs});
-  await sb.from("players").update({jokers: JSON.stringify(list)}).eq("id",who);
+  if(!who){ alert("Bitte zuerst eine Person oder Gruppe auswählen."); return; }
   const inf=JOKER_INFO[kind]||{label:kind};
-  showPopup(`${inf.label} (${secs}s) an ${p.name} vergeben ✓`,"");
+
+  // Empfänger bestimmen: einzelne Person oder eine ganze Gruppe
+  let recipients=[];
+  if(who==="all")            recipients=players.filter(p=>p.role!=="host");
+  else if(who==="all-target") recipients=players.filter(p=>p.role==="target");
+  else if(who==="all-hunter") recipients=players.filter(p=>p.role==="hunter");
+  else { const p=players.find(x=>x.id===who); if(p) recipients=[p]; }
+
+  if(!recipients.length){ alert("Keine passenden Personen gefunden."); return; }
+
+  // jedem Empfänger einen Joker in den Vorrat legen
+  await Promise.all(recipients.map(p=>{
+    const list=parseJokers(p);
+    list.push({id:Math.random().toString(36).slice(2,9), kind, secs});
+    return sb.from("players").update({jokers: JSON.stringify(list)}).eq("id",p.id);
+  }));
+
+  let label;
+  if(who==="all")            label="alle Spieler";
+  else if(who==="all-target") label="alle Targets";
+  else if(who==="all-hunter") label="alle Hunter";
+  else                        label=recipients[0].name;
+  showPopup(`${inf.label} (${secs}s) an ${label} vergeben ✓`,"");
   await refreshAll();
 };
 // Spielleiter: einen einzelnen Joker aus dem Vorrat einer Person entfernen
