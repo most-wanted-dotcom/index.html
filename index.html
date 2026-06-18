@@ -1472,19 +1472,45 @@ function onGameChange(payload){
         refreshAll();
         return;
       }
-      // live/silence/reveal: nur ankündigen, wenn es mich betrifft
-      const names={live:"LIVE-TRACKING aktiv – Standorte 10 Min durchgehend!",
-                   silence:"FUNKSTILLE – 10 Min keine Standort-Updates!",
-                   reveal:"AUFDECKUNG – Position jetzt sichtbar!"};
+      // live/silence/reveal: rollengerechte Meldung mit der tatsächlich eingestellten Zeit
       const icons={live:"📡",silence:"🔇",reveal:"🎯"};
+      // Restzeit der Aktion in Sekunden → hübsch als "X Min" / "X Sek"
+      const secsLeft=Math.max(0,Math.round((new Date(g.power_until)-new Date())/1000));
+      const durTxt = secsLeft>=60
+        ? (Math.round(secsLeft/60)+" Min")
+        : (secsLeft+" Sek");
+      // Name des einzelnen Targets (falls die Aktion nur eins betrifft)
+      const oneName = onlyId ? (players.find(p=>p.id===onlyId)?.name || "ein Target") : null;
+
       let affectsMe = true;
       if(me){
         if(me.role==="target") affectsMe = (!onlyId || onlyId===me.id);
-        else if(me.role==="hunter") affectsMe = true;   // Hunter profitieren immer von der Info
-        else affectsMe = false;                          // Host braucht keine Eigen-Meldung
+        else if(me.role==="hunter") affectsMe = true;
+        else affectsMe = false;   // Host braucht keine Eigen-Meldung
       }
       if(affectsMe){
-        showModal(names[g.power_kind]||"Spezialaktion!", icons[g.power_kind]||"📢");
+        let text="Spezialaktion!";
+        const kind=g.power_kind;
+        if(me.role==="hunter"){
+          if(kind==="live")
+            text = oneName
+              ? `📡 Du siehst jetzt ${durTxt} lang den Live-Standort von ${oneName}!`
+              : `📡 Du siehst jetzt ${durTxt} lang ALLE Targets live!`;
+          else if(kind==="reveal")
+            text = oneName
+              ? `🎯 Aufdeckung: ${oneName} ist jetzt auf deiner Karte sichtbar!`
+              : `🎯 Aufdeckung: Alle Targets sind jetzt auf deiner Karte sichtbar!`;
+          else if(kind==="silence")
+            text = `🔇 Funkstille: Ein Target ist ${durTxt} lang nicht zu sehen.`;
+        } else if(me.role==="target"){
+          if(kind==="live")
+            text = `📡 Dein Live-Standort ist jetzt ${durTxt} lang für die Hunter freigegeben!`;
+          else if(kind==="reveal")
+            text = `🎯 Dein Standort wurde gerade für die Hunter aufgedeckt!`;
+          else if(kind==="silence")
+            text = `🔇 Funkstille: Du bist jetzt ${durTxt} lang für die Hunter unsichtbar.`;
+        }
+        showModal(text, icons[kind]||"📢");
       }
     }
   }
