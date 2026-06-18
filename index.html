@@ -93,7 +93,28 @@
   .modal-text{font-family:var(--display);font-weight:600;font-size:21px;color:#fff;line-height:1.25;letter-spacing:.02em;margin-bottom:20px;}
   .modal-ok{background:var(--red);color:#fff;border:none;width:100%;padding:14px;border-radius:11px;font-family:var(--display);font-weight:700;font-size:16px;letter-spacing:.04em;text-transform:uppercase;}
 
+  /* Eiswürfel-Meldung (Hunter eingefroren) */
+  .modal-box.ice{background:linear-gradient(180deg,#0a2540,#0d3b5c);border:2px solid #7ec8ff;box-shadow:0 0 50px rgba(126,200,255,.55),inset 0 0 60px rgba(255,255,255,.12);overflow:hidden;}
+  .modal-box.ice::before{content:"";position:absolute;inset:0;background:
+     linear-gradient(120deg,rgba(255,255,255,.18) 0%,rgba(255,255,255,0) 40%),
+     linear-gradient(300deg,rgba(255,255,255,.12) 0%,rgba(255,255,255,0) 45%);
+     pointer-events:none;}
+  .modal-box.ice::after{content:"";position:absolute;top:-30%;left:-10%;width:50%;height:160%;
+     background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+     transform:skewX(-18deg);animation:shine 3.2s ease-in-out infinite;pointer-events:none;}
+  @keyframes shine{0%{left:-30%;}55%{left:120%;}100%{left:120%;}}
+  .modal-box.ice .modal-icon{filter:drop-shadow(0 0 10px #7ec8ff);}
+  .modal-box.ice .modal-text{color:#eaf6ff;text-shadow:0 1px 8px rgba(126,200,255,.6);}
+  .modal-box.ice .modal-ok{background:#1e6fb0;}
+  .modal-box.ice .modal-x{background:rgba(255,255,255,.18);}
+  .frost{position:absolute;inset:0;pointer-events:none;border-radius:18px;
+     background:radial-gradient(circle at 20% 15%,rgba(255,255,255,.25),transparent 22%),
+                radial-gradient(circle at 80% 25%,rgba(255,255,255,.18),transparent 18%),
+                radial-gradient(circle at 60% 80%,rgba(255,255,255,.2),transparent 20%),
+                radial-gradient(circle at 30% 70%,rgba(255,255,255,.15),transparent 16%);}
+
   .power-bar{margin:10px 14px 0;padding:11px 16px;border-radius:12px;background:#10243a;color:#7aa2f7;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;border:1px solid #1e3a5c;}
+  .power-bar.ice{background:#0d3b5c;color:#bfe6ff;border-color:#7ec8ff;}
   .power-grid{display:flex;flex-direction:column;gap:8px;}
   .power-grid button{background:#161619;color:var(--text);border:1px solid var(--line);padding:12px;border-radius:10px;font-weight:700;font-size:14px;text-align:left;}
   .field-grid{display:flex;flex-direction:column;gap:8px;}
@@ -298,11 +319,32 @@
         <button class="addbtn" onclick="sendMessage()">➤</button>
       </div>
       <div style="font-size:12px;color:var(--muted);margin:4px 0 6px;font-weight:600;">SPEZIALAKTIONEN</div>
+      <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Aktion auf alle Targets oder ein einzelnes Target anwenden:</div>
+      <select id="powerTarget" style="width:100%;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;margin-bottom:8px;">
+        <option value="">Alle Targets</option>
+      </select>
       <div class="power-grid">
         <button onclick="power('live')">📡 Live-Tracking 10 Min</button>
         <button onclick="power('silence')">🔇 Funkstille 10 Min</button>
         <button onclick="power('reveal')">🎯 Sofort aufdecken</button>
       </div>
+
+      <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">❄️ HUNTER EINFRIEREN</div>
+      <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Eingefrorene Hunter bekommen eine Eiswürfel-Meldung und sollen sich für die Dauer nicht bewegen.</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <select id="freezeTarget" style="flex:1;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;">
+          <option value="">Alle Hunter</option>
+        </select>
+        <input id="freezeSecs" type="number" min="10" max="600" step="10" value="60" style="width:78px;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;" />
+        <span style="font-size:12px;color:var(--muted);">Sek</span>
+      </div>
+      <div class="power-grid">
+        <button onclick="freezeHunters()" style="background:#0d3b5c;color:#bfe6ff;border-color:#7ec8ff;">❄️ Einfrieren</button>
+      </div>
+
+      <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">🃏 JOKER ZUWEISEN</div>
+      <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Gib einem Target einen Funkstille-Joker (oder nimm ihn wieder weg).</div>
+      <div id="jokerAssignList"></div>
 
       <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">SPIELFELD-GRENZE</div>
       <div class="field-grid">
@@ -334,7 +376,7 @@
     <div id="geoLine" class="geo hidden"></div>
     <div id="leafletMap" class="map"></div>
     <button id="jokerBtn" class="joker-btn hidden" onclick="useJoker()">🃏 Funkstille-Joker (1 Min)</button>
-    <p class="hint">Hunter sehen die Targets nur alle 15 Min (Endspiel: 5 Min). Targets sehen die Hunter nicht – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.</p>
+    <p class="hint">Hunter sehen die Targets nur alle 15 Min (Endspiel: 5 Min). Targets sehen die Hunter nicht – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.<br>📱 <b>Wichtig:</b> Lass das Display während des Spiels an. Die App hält den Bildschirm wach, aber bei wirklich schwarzem/gesperrtem Display friert das Handy die Standortübermittlung ein. Tipp: Bildschirm-Timeout im Handy hochstellen und das Gerät nicht sperren.</p>
   </div>
 
   <!-- Spieler -->
@@ -375,7 +417,8 @@
 
 <!-- Auffälliges Melde-Fenster (Annäherung & Durchsagen) -->
 <div id="modal" class="modal hidden">
-  <div class="modal-box">
+  <div id="modalBox" class="modal-box">
+    <div id="modalFrost" class="frost hidden"></div>
     <button class="modal-x" onclick="closeModal()" aria-label="Schließen">✕</button>
     <div id="modalIcon" class="modal-icon">⚠️</div>
     <div id="modalText" class="modal-text"></div>
@@ -434,8 +477,10 @@ const PING_NORMAL = 15*60;  // 15 Minuten – Freigabe an die Hunter
 const PING_ENDGAME = 5*60;  // 5 Minuten im Endspiel
 function pingInterval(){
   const p=activePower();
-  if(p==="live") return 5;         // Live-Tracking: praktisch durchgehend
-  if(p==="silence") return 1e9;    // Funkstille: keine Freigabe
+  // live/silence wirken auf den Ping-Takt nur, wenn sie MICH (dieses Target) betreffen
+  const forMe = me ? powerAffectsTarget(me.id) : true;
+  if(p==="live" && forMe) return 5;         // Live-Tracking: praktisch durchgehend
+  if(p==="silence" && forMe) return 1e9;    // Funkstille: keine Freigabe
   return game && game.phase==="endgame" ? PING_ENDGAME : PING_NORMAL;
 }
 // Sekunden bis zum nächsten Ping – berechnet aus dem Spielstart, daher für ALLE gleich
@@ -453,6 +498,18 @@ function pingCountdown(){
 function activePower(){
   if(!game||!game.power_kind||!game.power_until) return null;
   return new Date(game.power_until) > new Date() ? game.power_kind : null;
+}
+// Betrifft die aktuelle Aktion ein bestimmtes Target? (für Funkstille/Live je Spieler)
+// power_player leer/null = gilt für alle Targets.
+function powerAffectsTarget(playerId){
+  if(!game) return false;
+  return !game.power_player || game.power_player===playerId;
+}
+// Bin ICH (als Hunter) gerade eingefroren?
+function amIFrozen(){
+  if(!me || me.role!=="hunter") return false;
+  if(activePower()!=="freeze") return false;
+  return !game.power_player || game.power_player===me.id;
 }
 function isHost(){ return me && me.role==="host"; }
 
@@ -498,6 +555,44 @@ window.toggleJoin=async()=>{
   game.join_open=open;
   renderJoinToggle();
 };
+// Füllt die Host-Dropdowns (Aktion-Ziel, Einfrier-Ziel) und die Joker-Zuweisungsliste.
+// Behält die aktuelle Auswahl bei, damit sie beim Neu-Rendern nicht zurückspringt.
+function renderHostControls(){
+  const targets=players.filter(p=>p.role==="target");
+  const hunters=players.filter(p=>p.role==="hunter");
+
+  const pt=$("powerTarget");
+  if(pt){
+    const cur=pt.value;
+    pt.innerHTML='<option value="">Alle Targets</option>'+
+      targets.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("");
+    if([...pt.options].some(o=>o.value===cur)) pt.value=cur;
+  }
+  const ft=$("freezeTarget");
+  if(ft){
+    const cur=ft.value;
+    ft.innerHTML='<option value="">Alle Hunter</option>'+
+      hunters.map(h=>`<option value="${h.id}">${esc(h.name)}</option>`).join("");
+    if([...ft.options].some(o=>o.value===cur)) ft.value=cur;
+  }
+  // Joker-Zuweisung: pro Target ein Knopf (geben / wegnehmen)
+  const jl=$("jokerAssignList");
+  if(jl){
+    if(!targets.length){
+      jl.innerHTML='<div class="empty">Noch keine Targets im Spiel.</div>';
+    }else{
+      jl.innerHTML=targets.map(t=>{
+        const has=!t.joker_used;   // joker_used=false → Joker verfügbar
+        const btn = has
+          ? `<button class="catch-btn" style="background:#3a1c1c;color:#ff7b72" onclick="assignJoker('${t.id}',false)">Wegnehmen</button>`
+          : `<button class="catch-btn" style="background:#1c2740;color:#7aa2f7" onclick="assignJoker('${t.id}',true)">Joker geben</button>`;
+        const state = has ? '<span class="tag" style="color:#7c4dff;border:1px solid #7c4dff55">🃏 verfügbar</span>'
+                          : '<span class="tag" style="color:#666;border:1px solid #6663">kein Joker</span>';
+        return `<div class="row"><span class="nm">${esc(t.name)}</span>${state}${btn}</div>`;
+      }).join("");
+    }
+  }
+}
 function renderJoinToggle(){
   const b=$("btnJoinToggle");
   if(!b) return;
@@ -656,23 +751,27 @@ $("shrinkOff").onclick=()=>{chosenShrink=false;$("shrinkOff").className="on-targ
 
 // Target löst seinen persönlichen Funkstille-Joker aus (1 Min, einmalig)
 window.useJoker=async()=>{
-  if(me.role!=="target" || jokerUsed) return;
+  if(me.role!=="target" || me.joker_used) return;   // joker_used=true → kein Joker mehr
   if(!confirm("Funkstille-Joker jetzt einsetzen? Du bist 1 Minute unsichtbar – das geht nur einmal!")) return;
   jokerUsed=true;
   const until=new Date(Date.now()+60*1000).toISOString();
   await sb.from("players").update({silent_until:until,joker_used:true}).eq("id",me.id);
+  if(me) me.joker_used=true;
   showModal("Funkstille-Joker aktiv – du bist 1 Minute unsichtbar!", "🃏");
   renderJoker();
 };
 function renderJoker(){
   const btn=$("jokerBtn");
   if(!btn) return;
-  // nur für Targets sichtbar, wenn im Spiel aktiviert
-  const show = me && me.role==="target" && game && game.joker_enabled;
+  // Sichtbar für Targets, wenn der Joker im Spiel aktiviert ist ODER dem Target
+  // einer zugewiesen wurde (joker_used=false bedeutet: verfügbar).
+  const available = me && me.joker_used===false;
+  const show = me && me.role==="target" && game && (game.joker_enabled || available);
   btn.classList.toggle("hidden", !show);
   if(show){
-    btn.disabled = jokerUsed || (me.joker_used);
-    btn.textContent = (jokerUsed||me.joker_used) ? "🃏 Joker bereits benutzt" : "🃏 Funkstille-Joker (1 Min)";
+    const used = me.joker_used===true || jokerUsed;
+    btn.disabled = used;
+    btn.textContent = used ? "🃏 Joker bereits benutzt" : "🃏 Funkstille-Joker (1 Min)";
   }
 }
 
@@ -740,8 +839,12 @@ async function joinGame(g,name,asHost){
   game=g;
   // Der Ersteller bekommt die Rolle "host", normale Spieler ihre gewählte Rolle.
   const role = asHost ? "host" : chosenRole;
+  // joker_used=false bedeutet "Joker verfügbar". Targets bekommen beim Beitritt
+  // einen Joker, wenn das Spiel ihn aktiviert hat; sonst startet ohne (der Host
+  // kann ihn später einzeln zuweisen). Hunter/Host brauchen keinen.
+  const startJokerUsed = !(role==="target" && g.joker_enabled);
   const {data,error}=await sb.from("players")
-    .insert({game_id:g.id,name,role}).select().single();
+    .insert({game_id:g.id,name,role,joker_used:startJokerUsed}).select().single();
   if(error){showErr("Beitritt fehlgeschlagen: "+error.message);return;}
   me=data;
   // Ersteller wird zusätzlich als Spielleiter (host_id) im Spiel vermerkt
@@ -827,6 +930,8 @@ async function refreshAll(){
     sb.from("chat").select().eq("game_id",game.id).order("created_at").then(r=>r,()=>({data:[]})),
   ]);
   if(g)game=g; players=pl||[]; sightings=si||[]; chatMsgs=ch||[];
+  // Eigenen Spieler-Datensatz aktualisieren (z. B. wenn der Host einen Joker zuweist)
+  if(me){ const fresh=players.find(p=>p.id===me.id); if(fresh) me=fresh; }
   render();
 }
 
@@ -896,12 +1001,31 @@ function onGameChange(payload){
   // Wenn eine neue Aktion gestartet wurde, ankündigen
   if(g.power_until && g.power_until!==lastPowerStamp){
     lastPowerStamp=g.power_until;
-    const names={live:"LIVE-TRACKING aktiv – Standorte 10 Min durchgehend!",
-                 silence:"FUNKSTILLE – 10 Min keine Standort-Updates!",
-                 reveal:"AUFDECKUNG – alle Targets jetzt sichtbar!"};
-    const icons={live:"📡",silence:"🔇",reveal:"🎯"};
     if(g.power_kind && new Date(g.power_until)>new Date()){
-      showModal(names[g.power_kind]||"Spezialaktion!", icons[g.power_kind]||"📢");
+      const onlyId = g.power_player || null;
+      // Freeze: nur die betroffenen Hunter bekommen die Eiswürfel-Meldung
+      if(g.power_kind==="freeze"){
+        if(me && me.role==="hunter" && (!onlyId || onlyId===me.id)){
+          const secs = g.power_secs || 60;
+          showModal(`Du bist eingefroren! Bleib ${secs} Sekunden stehen und beweg dich nicht.`, "🧊", "ice");
+        }
+        refreshAll();
+        return;
+      }
+      // live/silence/reveal: nur ankündigen, wenn es mich betrifft
+      const names={live:"LIVE-TRACKING aktiv – Standorte 10 Min durchgehend!",
+                   silence:"FUNKSTILLE – 10 Min keine Standort-Updates!",
+                   reveal:"AUFDECKUNG – Position jetzt sichtbar!"};
+      const icons={live:"📡",silence:"🔇",reveal:"🎯"};
+      let affectsMe = true;
+      if(me){
+        if(me.role==="target") affectsMe = (!onlyId || onlyId===me.id);
+        else if(me.role==="hunter") affectsMe = true;   // Hunter profitieren immer von der Info
+        else affectsMe = false;                          // Host braucht keine Eigen-Meldung
+      }
+      if(affectsMe){
+        showModal(names[g.power_kind]||"Spezialaktion!", icons[g.power_kind]||"📢");
+      }
     }
   }
   refreshAll();
@@ -919,9 +1043,12 @@ function showPopup(text, audience){
 }
 
 // Auffälliges Melde-Fenster – bleibt offen, bis es geschlossen wird
-function showModal(text, icon){
+// mode: "ice" für die Eiswürfel-Optik (Hunter eingefroren)
+function showModal(text, icon, mode){
   $("modalText").textContent=text;
   $("modalIcon").textContent=icon||"📢";
+  $("modalBox").classList.toggle("ice", mode==="ice");
+  $("modalFrost").classList.toggle("hidden", mode!=="ice");
   $("modal").classList.remove("hidden");
   alertSignal();  // Ton + Vibration, damit man es auch in der Tasche merkt
 }
@@ -956,6 +1083,7 @@ function render(){
   // Spielleiter-Steuerpult nur dem Host zeigen
   $("hostPanel").classList.toggle("hidden", !isHost());
   if(isHost()) renderJoinToggle();
+  if(isHost()) renderHostControls();
   if(isHost() && game.field_radius){ chosenRadius=game.field_radius; markRadius(game.field_radius); }
   document.querySelectorAll(".phase-step").forEach((b,i)=>{
     const on=PHASES[i].id===game.phase;
@@ -976,11 +1104,13 @@ function render(){
   // nur zum letzten Freigabe-Zeitpunkt; Targets sehen nur Targets (Hunter verborgen).
   const silence = activePower()==="silence";
   const personalSilent = (p)=> p.silent_until && new Date(p.silent_until)>new Date();
+  // Globale Funkstille blendet ein Target nur aus, wenn die Aktion dieses Target betrifft
+  const globalSilentFor = (p)=> silence && powerAffectsTarget(p.id);
   let visible;
   if(me.role==="host")        visible = players.filter(p=>p.role!=="host");
   else if(me.role==="hunter"){
-    // Bei (globaler) Funkstille ODER aktivem Joker verschwinden Targets von der Hunter-Karte
-    visible = players.filter(p=>p.role!=="host" && !((silence||personalSilent(p)) && p.role==="target"));
+    // Bei Funkstille (für dieses Target) ODER aktivem Joker verschwinden Targets von der Hunter-Karte
+    visible = players.filter(p=>p.role!=="host" && !((globalSilentFor(p)||personalSilent(p)) && p.role==="target"));
   }
   else                        visible = players.filter(p=>p.role==="target");
   // Host: Live-Koordinate verwenden; alle anderen: freigegebene Koordinate
@@ -1207,22 +1337,48 @@ window.sendMessage=async()=>{
 };
 
 // Spielleiter: Spezialaktion auslösen (10 Min, außer "reveal" = sofort)
+// Wirkt auf alle Targets oder – wenn im Dropdown gewählt – nur auf ein einzelnes Target.
 window.power=async(kind)=>{
   if(!isHost())return;
+  const sel=$("powerTarget");
+  const onlyId = sel ? sel.value : "";   // leere Auswahl = alle
   if(kind==="reveal"){
-    // Sofort aufdecken: aktuellste Live-Position jedes Targets als freigegebene Position setzen.
-    // Das macht der Spielleiter zentral – unabhängig von den Target-Geräten.
+    // Sofort aufdecken: aktuellste Live-Position als freigegebene Position setzen.
     await refreshAll();  // erst frische Live-Positionen holen
-    const targets=players.filter(p=>p.role==="target" && p.live_lat!=null);
+    let targets=players.filter(p=>p.role==="target" && p.live_lat!=null);
+    if(onlyId) targets=targets.filter(t=>t.id===onlyId);
     await Promise.all(targets.map(t=>
       sb.from("players").update({lat:t.live_lat,lng:t.live_lng}).eq("id",t.id)
     ));
+    const who = onlyId ? (players.find(p=>p.id===onlyId)?.name||"ein Target") : null;
     // Kurzes Aufdeck-Signal ins Spiel schreiben (für die Ankündigung)
-    await sb.from("games").update({power_kind:"reveal",power_until:new Date(Date.now()+8000).toISOString()}).eq("id",game.id);
+    await sb.from("games").update({power_kind:"reveal",power_player:onlyId||null,power_until:new Date(Date.now()+8000).toISOString()}).eq("id",game.id);
+    showPopup(onlyId ? (who+" aufgedeckt ✓") : "Alle Targets aufgedeckt ✓","");
     return;
   }
   const until=new Date(Date.now()+10*60*1000).toISOString();
-  await sb.from("games").update({power_kind:kind,power_until:until}).eq("id",game.id);
+  await sb.from("games").update({power_kind:kind,power_player:onlyId||null,power_until:until}).eq("id",game.id);
+};
+
+// Spielleiter: Hunter einfrieren (alle oder einen einzelnen) – nur Eiswürfel-Meldung
+window.freezeHunters=async()=>{
+  if(!isHost())return;
+  const sel=$("freezeTarget");
+  const onlyId = sel ? sel.value : "";
+  let secs=parseInt($("freezeSecs").value)||60;
+  secs=Math.min(600,Math.max(10,secs));
+  const until=new Date(Date.now()+secs*1000).toISOString();
+  await sb.from("games").update({power_kind:"freeze",power_player:onlyId||null,power_until:until,power_secs:secs}).eq("id",game.id);
+  const who = onlyId ? (players.find(p=>p.id===onlyId)?.name||"ein Hunter") : "alle Hunter";
+  showPopup("❄️ "+who+" eingefroren ("+secs+" Sek)","");
+};
+
+// Spielleiter: einem Target einen Joker geben oder wegnehmen
+window.assignJoker=async(id,give)=>{
+  if(!isHost())return;
+  // give=true → Joker freischalten (joker_used=false); give=false → als benutzt markieren (sperren)
+  await sb.from("players").update({joker_used: !give}).eq("id",id);
+  await refreshAll();
 };
 
 // ---------- Standort: einmal aktiviert, bleibt an ----------
@@ -1240,12 +1396,23 @@ function startGeo(){
   $("btnLive").textContent="📍 Standort aktiv";
   $("btnLive").disabled=true;
   $("btnLive").style.opacity=".6";
+  requestWakeLock();   // Display möglichst wachhalten, solange die App vorn ist
   watchId=navigator.geolocation.watchPosition((pos)=>{
     myLat=pos.coords.latitude; myLng=pos.coords.longitude;
+    const first=!geoActivated;
     geoActivated=true;
     $("geoLine").classList.remove("hidden");
     updateGeoLine(pos.coords.accuracy);
     sendLive();  // sofort einmal live senden
+    // Beim allerersten erfolgreichen Standort einmalig deutlich erklären
+    if(first){
+      let shown=false;
+      try{ shown = localStorage.getItem("mw_wakeinfo")==="1"; }catch(e){}
+      if(!shown){
+        try{ localStorage.setItem("mw_wakeinfo","1"); }catch(e){}
+        showModal("Lass das Display während des Spiels an! Die App hält den Bildschirm wach, aber wenn das Handy gesperrt wird oder der Bildschirm ganz ausgeht, pausiert die Standortübermittlung. Tipp: Bildschirm-Timeout hochstellen.", "📱");
+      }
+    }
   },()=>{
     // Bei Fehler/abgelehntem Zugriff: Hinweis, aber Aktivierungs-Merker bleibt
     $("geoLine").classList.remove("hidden");
@@ -1253,14 +1420,51 @@ function startGeo(){
   },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
 }
 
+// ---------- Display wachhalten ----------
+// WICHTIG: Browser/Handy frieren bei wirklich schwarzem Bildschirm jede Webseite ein
+// (Vorgabe von Android/iOS, kein Code kann das umgehen). Darum sorgen wir dafür,
+// dass das Display möglichst nicht von selbst ausgeht (Wake Lock) und holen den
+// Standort sofort nach, sobald die App wieder sichtbar ist.
+let wakeLock=null, wakeActive=false;
+async function requestWakeLock(){
+  try{
+    if("wakeLock" in navigator && document.visibilityState==="visible"){
+      wakeLock=await navigator.wakeLock.request("screen");
+      wakeActive=true;
+      wakeLock.addEventListener("release",()=>{ wakeLock=null; wakeActive=false; try{updateGeoLine();}catch(e){} });
+      try{ updateGeoLine(); }catch(e){}
+    }
+  }catch(e){ wakeActive=false; /* nicht unterstützt – Hinweis kommt in der Statuszeile */ }
+}
+// Kommt die App aus dem Hintergrund/Sperrbildschirm zurück: Wake Lock erneuern,
+// sofort frische Position senden und Daten neu laden.
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState!=="visible"){ wakeActive=false; return; }
+  if(geoActivated){ requestWakeLock(); }
+  // Einmalige frische Ortung anstoßen, damit der Standort nach der Pause aktuell ist
+  if(geoActivated && navigator.geolocation){
+    navigator.geolocation.getCurrentPosition((pos)=>{
+      myLat=pos.coords.latitude; myLng=pos.coords.longitude;
+      sendLive();
+      try{ if(typeof releaseLocation==="function") releaseLocation(); }catch(e){}
+    },()=>{},{enableHighAccuracy:true,maximumAge:0,timeout:15000});
+  }
+  // Spielstand auffrischen, falls während der Pause etwas passiert ist
+  try{ if(sb && game) refreshAll(); }catch(e){}
+});
+
 function updateGeoLine(acc){
   if(me.role==="host"){ $("geoLine").classList.add("hidden"); return; }
+  // Hinweis zum Display-Wachhalten anhängen
+  const wakeTxt = wakeActive
+    ? ' · <span style="color:#7ee787">🔆 Display wird wachgehalten</span>'
+    : ' · <span style="color:#ffd27a">⚠️ Display bitte anlassen</span>';
   if(me.role==="hunter"){
-    $("geoLine").innerHTML=`<span class="live">● aktiv</span> dein Standort wird geteilt`;
+    $("geoLine").innerHTML=`<span class="live">● aktiv</span> dein Standort wird geteilt${wakeTxt}`;
     return;
   }
   const accTxt=acc?` <span style="color:#666">±${Math.round(acc)}m</span>`:"";
-  $("geoLine").innerHTML=`<span class="live">● aktiv</span> Standort wird geteilt${accTxt}`;
+  $("geoLine").innerHTML=`<span class="live">● aktiv</span> Standort wird geteilt${accTxt}${wakeTxt}`;
 }
 
 // LIVE: aktuellen Standort an den Spielleiter senden (alle 20 Sek)
@@ -1324,7 +1528,18 @@ let hunterRenderTick=0;
 function updatePowerBar(){
   const p=activePower();
   const bar=$("powerBar");
-  if(!p || p==="reveal"){ bar.classList.add("hidden"); return; }
+  // Eingefrorener Hunter: eigene Eiswürfel-Leiste mit Countdown
+  if(amIFrozen()){
+    const left=Math.max(0,Math.round((new Date(game.power_until)-new Date())/1000));
+    bar.className="power-bar ice";
+    bar.innerHTML=`🧊 Eingefroren – steh still · noch ${left}s`;
+    bar.classList.remove("hidden");
+    return;
+  }
+  bar.className="power-bar";
+  if(!p || p==="reveal" || p==="freeze"){ bar.classList.add("hidden"); return; }
+  // live/silence: Leiste nur zeigen, wenn die Aktion mich betrifft
+  if(me && me.role==="target" && !powerAffectsTarget(me.id)){ bar.classList.add("hidden"); return; }
   const left=Math.max(0,Math.round((new Date(game.power_until)-new Date())/1000));
   const label = p==="live" ? "📡 Live-Tracking läuft" : "🔇 Funkstille läuft";
   bar.innerHTML=`${label} · noch ${fmt(left).slice(3)}`;
