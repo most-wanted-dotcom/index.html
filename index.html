@@ -999,34 +999,58 @@ function renderJoker(){
 // Person löst einen ihr zugewiesenen Joker selbst aus. Effekt wirkt nur für sie.
 window.useAssignedJoker=async(jokerId)=>{
   if(!me) return;
-  if(mySelfEffect()){ showPopup("Es läuft schon ein Joker-Effekt.",""); return; }
   const list=parseJokers(me);
   const j=list.find(x=>x.id===jokerId);
   if(!j) return;
   const inf=JOKER_INFO[j.kind]||{label:j.kind,icon:"🃏"};
+
+  // ---- EINFRIEREN: wirkt auf den nächstgelegenen GEGNER ----
+  if(j.kind==="freeze"){
+    if(myLat==null){ showPopup("Dein Standort ist noch nicht aktiv.",""); return; }
+    const oppRole = me.role==="hunter" ? "target" : "hunter";
+    // Gegner mit bekannter Live-Position
+    const opps=players.filter(p=>p.role===oppRole && p.live_lat!=null && !p.caught);
+    if(!opps.length){ showPopup("Kein Gegner mit bekanntem Standort gefunden.",""); return; }
+    // nächsten Gegner bestimmen
+    let nearest=null, best=Infinity;
+    opps.forEach(p=>{
+      const d=distMeters(myLat,myLng,p.live_lat,p.live_lng);
+      if(d<best){ best=d; nearest=p; }
+    });
+    if(!nearest){ showPopup("Kein Gegner gefunden.",""); return; }
+    if(!confirm(`${inf.label} (${j.secs}s) auf ${nearest.name} einsetzen (nächster Gegner)? Das geht nur einmal.`)) return;
+    // Joker aus meinem Vorrat entfernen
+    const rest=list.filter(x=>x.id!==jokerId);
+    await sb.from("players").update({jokers:JSON.stringify(rest)}).eq("id",me.id);
+    me.jokers=JSON.stringify(rest);
+    // Effekt beim GEGNER setzen (sein self_kind=freeze) + Eiswürfel via realtime
+    const until=new Date(Date.now()+j.secs*1000).toISOString();
+    await sb.from("players").update({self_kind:"freeze",self_until:until}).eq("id",nearest.id);
+    // dem Gegner eine Nachricht schicken, die bei ihm das Eiswürfel-Modal auslöst
+    await sb.from("messages").insert({game_id:game.id,audience:"freeze-one",text:String(j.secs),target_id:nearest.id});
+    showPopup(`❄️ ${nearest.name} eingefroren (${j.secs}s)`,"");
+    renderJoker(); render();
+    return;
+  }
+
+  // ---- Übrige Joker: wirken auf MICH selbst ----
+  if(mySelfEffect()){ showPopup("Es läuft schon ein Joker-Effekt.",""); return; }
   if(!confirm(`${inf.label} (${j.secs}s) jetzt einsetzen? Das geht nur einmal.`)) return;
-  // Joker aus dem Vorrat entfernen
   const rest=list.filter(x=>x.id!==jokerId);
   const until=new Date(Date.now()+j.secs*1000).toISOString();
   const patch={ jokers: JSON.stringify(rest), self_kind:j.kind, self_until:until };
-  // Funkstille macht die Person zusätzlich für die Hunter unsichtbar (silent_until)
   if(j.kind==="silence") patch.silent_until=until;
-  // reveal = Moment: nur kurz aktiv halten, der eigentliche Effekt ist das Sichtbarmachen
   if(j.kind==="reveal"){
     patch.self_until=new Date(Date.now()+10000).toISOString();
-    // Persönliche Momentaufnahme der aktuellen Target-Live-Positionen speichern
     const snap=players.filter(p=>p.role==="target" && p.live_lat!=null)
       .map(p=>({id:p.id,name:p.name,lat:p.live_lat,lng:p.live_lng}));
     patch.reveal_snap=JSON.stringify(snap);
   }
   await sb.from("players").update(patch).eq("id",me.id);
-  // lokal sofort übernehmen
   me.jokers=patch.jokers; me.self_kind=patch.self_kind; me.self_until=patch.self_until;
   if(patch.silent_until) me.silent_until=patch.silent_until;
   if(patch.reveal_snap) me.reveal_snap=patch.reveal_snap;
-  // Rückmeldung / Effekt-Anzeige
-  if(j.kind==="freeze"){ showFreezeModal(j.secs); }
-  else if(j.kind==="reveal"){ showModal("Du siehst jetzt kurz alle Target-Positionen (Momentaufnahme).", "🎯"); }
+  if(j.kind==="reveal"){ showModal("Du siehst jetzt kurz alle Target-Positionen (Momentaufnahme).", "🎯"); }
   else if(j.kind==="live"){ showModal(`Live-Standort aktiv – du siehst die Targets ${j.secs}s lang durchgehend.`, "📡"); }
   else if(j.kind==="silence"){ showModal(`Funkstille aktiv – du bist ${j.secs}s unsichtbar.`, "🔇"); }
   renderJoker();
@@ -1273,8 +1297,17 @@ async function refreshAll(){
       showFreezeModal(Math.ceil(leftMs/1000));
     }
   }
+  // Fallback: persönliches Einfrieren durch einen Gegner-Joker (self_kind=freeze)
+  if(me && me.self_kind==="freeze" && me.self_until && me.self_until!==lastSelfFreezeShown){
+    const leftMs=new Date(me.self_until)-new Date();
+    if(leftMs>1500){
+      lastSelfFreezeShown=me.self_until;
+      showFreezeModal(Math.ceil(leftMs/1000));
+    }
+  }
   render();
 }
+let lastSelfFreezeShown=null;
 
 
 // ---------- Echtzeit ----------
@@ -1308,6 +1341,14 @@ function onMessage(payload){
 // Zeigt eine Durchsage an, sofern sie an die eigene Rolle gerichtet ist
 function displayMessage(m){
   if(!m || !me) return;
+  // Einfrieren durch einen Gegner-Joker: nur die betroffene Person zeigt das Eiswürfel-Modal
+  if(m.audience==="freeze-one"){
+    if(m.target_id===me.id){
+      const secs=parseInt(m.text)||60;
+      showFreezeModal(secs);
+    }
+    return;
+  }
   // Zonen-Warnung geht an ALLE inkl. Spielleiter
   if(m.audience==="all-incl-host"){
     showModal(m.text, "⚠️");
