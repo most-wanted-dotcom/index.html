@@ -240,7 +240,17 @@
   <div class="field">
     <label>FINALE-DAUER (MINUTEN)</label>
     <input id="cfgEnd" type="number" min="0" max="240" step="5" value="15" inputmode="numeric" />
-    <div style="font-size:11px;color:#55555c;margin-top:6px;">So lange dauert das Finale am Ende. In dieser Zeit wird der Standort alle 5 Min statt alle 15 Min übermittelt. Beispiel: 15 = die letzten 15 Minuten sind das Finale.</div>
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">So lange dauert das Finale am Ende. In dieser Zeit gilt das kürzere Standort-Intervall. Beispiel: 15 = die letzten 15 Minuten sind das Finale.</div>
+  </div>
+  <div class="field">
+    <label>STANDORT-INTERVALL (MINUTEN)</label>
+    <input id="cfgPing" type="number" min="1" max="60" step="1" value="15" inputmode="numeric" />
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">Wie oft der Standort der Targets an die Hunter übermittelt wird (Momentaufnahme). Standard: alle 15 Min.</div>
+  </div>
+  <div class="field">
+    <label>STANDORT-INTERVALL IM FINALE (MINUTEN)</label>
+    <input id="cfgPingEnd" type="number" min="1" max="60" step="1" value="5" inputmode="numeric" />
+    <div style="font-size:11px;color:#55555c;margin-top:6px;">Im Finale meist kürzer, damit es spannender wird. Standard: alle 5 Min.</div>
   </div>
   <div class="field">
     <label>FUNKSTILLE-JOKER FÜR TARGETS</label>
@@ -425,7 +435,7 @@
     <button id="jokerBtn" class="joker-btn hidden" onclick="useJoker()">🃏 Funkstille-Joker (1 Min)</button>
     <div id="myJokers"></div>
     <div id="selfEffectBar" class="power-bar hidden" style="margin:0 16px 8px;"></div>
-    <p class="hint">Hunter sehen die Targets nur alle 15 Min (Endspiel: 5 Min). Targets sehen die Hunter nicht – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.<br>📱 <b>Wichtig:</b> Lass das Display während des Spiels an. Die App hält den Bildschirm wach, aber bei wirklich schwarzem/gesperrtem Display friert das Handy die Standortübermittlung ein. Tipp: Bildschirm-Timeout im Handy hochstellen und das Gerät nicht sperren.</p>
+    <p class="hint">Hunter sehen die Targets nur in festen Intervallen (im Finale kürzer). Targets sehen die Hunter nicht – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.<br>📱 <b>Wichtig:</b> Lass das Display während des Spiels an. Die App hält den Bildschirm wach, aber bei wirklich schwarzem/gesperrtem Display friert das Handy die Standortübermittlung ein. Tipp: Bildschirm-Timeout im Handy hochstellen und das Gerät nicht sperren.</p>
   </div>
 
   <!-- Spieler -->
@@ -531,7 +541,10 @@ function pingInterval(){
   const forMe = me ? powerAffectsTarget(me.id) : true;
   if(p==="live" && forMe) return 5;         // Live-Tracking: praktisch durchgehend
   if(p==="silence" && forMe) return 1e9;    // Funkstille: keine Freigabe
-  return game && game.phase==="endgame" ? PING_ENDGAME : PING_NORMAL;
+  // Einstellbare Intervalle (Minuten → Sekunden), Fallback auf 15 bzw. 5 Min
+  const normal = (game && game.ping_min)     ? game.ping_min*60     : PING_NORMAL;
+  const finale = (game && game.ping_end_min) ? game.ping_end_min*60 : PING_ENDGAME;
+  return game && game.phase==="endgame" ? finale : normal;
 }
 // Sekunden bis zum nächsten Ping – berechnet aus dem Spielstart, daher für ALLE gleich
 // und unabhängig vom Neuladen. Beruht auf game.started_at.
@@ -838,6 +851,9 @@ function checkProximity(){
   checkField();
   // Annäherungs-Warnung nur für Targets
   if(!me || me.role!=="target" || myLat==null || me.caught) return;
+  // Während des Vorsprungs (Headstart) noch KEINE Annäherungs-Warnung – erst wenn
+  // die Jagd begonnen hat. So fliehen die Targets ungestört.
+  if(headstartLeft()!=null || game.phase==="headstart") return;
   const warn=(game && game.warn_dist) ? game.warn_dist : 500;
   const reset=warn*1.5;  // erst wieder warnen, wenn Hunter sich deutlich entfernt hat
   players.filter(p=>p.role==="hunter" && p.live_lat!=null).forEach(h=>{
@@ -1082,12 +1098,16 @@ $("btnCreateGo").onclick=async()=>{
   const hours=parseFloat($("cfgHours").value)||5;
   const headMin=parseInt($("cfgHead").value)||0;
   const endMin=parseInt($("cfgEnd").value)||0;
+  const pingMin=Math.max(1, parseInt($("cfgPing").value)||15);
+  const pingEndMin=Math.max(1, parseInt($("cfgPingEnd").value)||5);
   const code=(Math.random().toString(36).slice(2,6)+Math.floor(Math.random()*90+10)).toUpperCase();
   const {data,error}=await sb.from("games").insert({
     code, phase:"lobby", warn_dist:chosenDist,
     duration_min: Math.round(hours*60),
     headstart_min: headMin,
     endgame_min: endMin,
+    ping_min: pingMin,
+    ping_end_min: pingEndMin,
     joker_enabled: chosenJoker,
     shrink_enabled: chosenShrink,
     field_radius: chosenRadius,
@@ -2197,7 +2217,10 @@ function startTimer(){
     } else {
       const pingLeft=pingCountdown();   // aus Spielstart berechnet → überlebt Neuladen
       $("pingLabel").style.display="";
-      $("pingLabel").textContent = game.phase==="endgame" ? "Nächster Standort (Finale, alle 5 Min)" : "Nächster Standort an Hunter (alle 15 Min)";
+      const nMin = game.ping_min || 15, eMin = game.ping_end_min || 5;
+      $("pingLabel").textContent = game.phase==="endgame"
+        ? `Nächster Standort (Finale, alle ${eMin} Min)`
+        : `Nächster Standort an Hunter (alle ${nMin} Min)`;
       $("timer").textContent=fmt(pingLeft).slice(3); // MM:SS
       $("timer").style.color="var(--orange)";
     }
