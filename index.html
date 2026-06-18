@@ -1335,12 +1335,18 @@ function render(){
     visible = players.filter(p=>p.role!=="host" && !((globalSilentFor(p)||personalSilent(p)) && p.role==="target"));
   }
   else                        visible = players.filter(p=>p.role==="target");
-  // Host: Live-Koordinate verwenden; alle anderen: freigegebene Koordinate
+  // Host: Live-Koordinate für alle. Andere: freigegebene (verzögerte) Koordinate –
+  // ABER den EIGENEN Punkt sieht jeder live (über myLat/myLng).
   const useLive = me.role==="host";
   const withGeo = visible
     .map(p=>{
-      const lat = useLive ? p.live_lat : p.lat;
-      const lng = useLive ? p.live_lng : p.lng;
+      let lat, lng;
+      if(p.id===me.id && myLat!=null){      // mein eigener Standort: immer live
+        lat=myLat; lng=myLng;
+      } else {
+        lat = useLive ? p.live_lat : p.lat;
+        lng = useLive ? p.live_lng : p.lng;
+      }
       return (lat!=null) ? {...p, lat, lng} : null;
     })
     .filter(Boolean);
@@ -1717,7 +1723,8 @@ async function releaseLocation(){
 // Loops: live alle 20 Sek + Freigabe genau im DB-Takt (für alle synchron)
 function startPingLoop(){
   clearInterval(pingInt);
-  setTimeout(()=>{ if(geoActivated) releaseLocation(); }, 4000);  // erste Freigabe nach Beitritt
+  // KEINE sofortige Freigabe beim Beitritt: Die Hunter sollen die Position erst
+  // sehen, wenn das erste echte Ping-Fenster (15 Min, Finale 5 Min) abgelaufen ist.
   pingInt=setInterval(()=>{
     updatePowerBar();
     checkProximity();
@@ -1729,11 +1736,17 @@ function startPingLoop(){
         try{ render(); }catch(e){}   // Punkte verschwinden (Start) bzw. kommen zurück (Ende)
       }
     }
-    // Hunter: Spielerliste alle 2 Sek neu zeichnen, damit die Schnappen-Distanz
-    // mitzählt, während er sich bewegt (Knopf entsperrt bei ≤25 m).
-    if(me && me.role==="hunter"){
+    // Hunter: Spielerliste alle 2 Sek neu zeichnen (Schnappen-Distanz).
+    // Target: ebenfalls neu zeichnen, damit der EIGENE Live-Punkt der Bewegung folgt.
+    if(me && (me.role==="hunter" || me.role==="target")){
       hunterRenderTick=(hunterRenderTick+1)%2;
       if(hunterRenderTick===0){ try{ render(); }catch(e){} }
+    }
+    // Phasenwechsel (z. B. 15-Min-Phase → 5-Min-Finale): Ping-Fenster neu anfangen,
+    // damit das Finale mit einem vollen 5-Min-Fenster startet statt sofort freizugeben.
+    if(me && game && game.phase!==lastPhaseSeen){
+      lastPhaseSeen=game.phase;
+      lastReleaseWindow=-1;   // beim nächsten Tick wird das aktuelle Fenster neu gemerkt (ohne Freigabe)
     }
     if(!geoActivated||myLat==null) return;
     // Nach Spielende keine Standortübermittlung mehr
@@ -1741,14 +1754,20 @@ function startPingLoop(){
     if(gameOver) return;
     // alle 20 Sek live an den Spielleiter
     if(Date.now()/1000-lastLiveAt >= LIVE_EVERY) sendLive();
-    // Freigabe an die Hunter: immer wenn ein neues Ping-Fenster beginnt (Countdown ~ Intervall)
+    // Freigabe an die Hunter: erst wenn ein Ping-Fenster WIRKLICH abgelaufen ist.
+    // Beispiel 15-Min-Phase: Position wird zu Minute 15, 30, 45 ... freigegeben –
+    // NICHT zu Spielbeginn. Zwischen den Pings bleibt der Marker eingefroren.
     const iv=pingInterval();
-    if(iv<1e8 && game.started_at){
+    if(iv<1e8 && game.started_at && game.phase!=="headstart"){
       const elapsed=(Date.now()-new Date(game.started_at))/1000;
-      const windowIndex=Math.floor(elapsed/iv);          // welches Ping-Fenster gerade läuft
-      if(windowIndex!==lastReleaseWindow){
+      const windowIndex=Math.floor(elapsed/iv);          // 0 = erstes Fenster läuft noch
+      // Beim ersten Durchlauf merken wir uns das aktuelle Fenster, OHNE freizugeben.
+      if(lastReleaseWindow<0){
         lastReleaseWindow=windowIndex;
-        releaseLocation();                                // genau zum Fensterwechsel freigeben
+      } else if(windowIndex>lastReleaseWindow){
+        // Ein Fenster ist abgelaufen → jetzt die aktuelle Position freigeben
+        lastReleaseWindow=windowIndex;
+        releaseLocation();
       }
     }
     updateGeoLine();
@@ -1756,6 +1775,7 @@ function startPingLoop(){
 }
 let lastSilenceState=false;
 let hunterRenderTick=0;
+let lastPhaseSeen=null;
 
 // Zeigt eine laufende Spezialaktion mit Restzeit an
 function updatePowerBar(){
