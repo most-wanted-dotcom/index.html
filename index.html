@@ -359,9 +359,14 @@
       <select id="powerTarget" style="width:100%;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;margin-bottom:8px;">
         <option value="">Alle Targets</option>
       </select>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <span style="font-size:12px;color:var(--muted);">Dauer (für Live/Funkstille):</span>
+        <input id="powerSecs" type="number" min="10" max="3600" step="10" value="600" style="width:90px;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:10px;border-radius:9px;" />
+        <span style="font-size:12px;color:var(--muted);">Sek</span>
+      </div>
       <div class="power-grid">
-        <button onclick="power('live')">📡 Live-Tracking 10 Min</button>
-        <button onclick="power('silence')">🔇 Funkstille 10 Min</button>
+        <button onclick="power('live')">📡 Live-Tracking</button>
+        <button onclick="power('silence')">🔇 Funkstille</button>
         <button onclick="power('reveal')">🎯 Sofort aufdecken</button>
       </div>
 
@@ -386,10 +391,10 @@
       <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">🃏 JOKER ZUWEISEN</div>
       <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Gib einer Person einen Joker. Sie löst ihn selbst aus, wann sie will. Mehrere Joker gleichzeitig möglich.</div>
       <select id="jkKind" style="width:100%;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;margin-bottom:8px;">
-        <option value="freeze">❄️ Einfrieren</option>
-        <option value="reveal">🎯 Alle aufdecken (Moment)</option>
-        <option value="live">📡 Live-Standort (dauerhaft)</option>
-        <option value="silence">🔇 Funkstille (unsichtbar)</option>
+        <option value="freeze">❄️ Einfrieren (Targets & Hunter)</option>
+        <option value="reveal">🎯 Alle aufdecken – Moment (nur Hunter)</option>
+        <option value="live">📡 Live-Standort – dauerhaft (nur Hunter)</option>
+        <option value="silence">🔇 Funkstille – unsichtbar (nur Targets)</option>
       </select>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
         <select id="jkWho" style="flex:1;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:11px;border-radius:9px;">
@@ -402,6 +407,10 @@
         <button onclick="assignJoker()" style="background:#2a1f3d;color:#c4a8ff;border-color:#7c4dff;">🃏 Joker geben</button>
       </div>
       <div id="jokerAssignList" style="margin-top:10px;"></div>
+
+      <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">📓 LOGBUCH – FÄNGE</div>
+      <div style="font-size:11px;color:#55555c;margin-bottom:6px;">Wer hat wann welches Target gefangen (bleibt für die ganze Spieldauer erhalten).</div>
+      <div id="catchLog" style="font-size:12px;"></div>
 
       <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">SPIELFELD-GRENZE</div>
       <div class="field-grid">
@@ -746,6 +755,28 @@ function renderHostControls(){
         return `<div style="margin-bottom:8px;"><div style="font-weight:600;font-size:13px;">${esc(p.name)} <span style="color:#666;font-weight:400;">(${p.role==="hunter"?"Hunter":"Target"})</span></div><div style="margin-top:3px;">${list}</div></div>`;
       }).join("");
     }
+  }
+  // Logbuch der Fänge laden und anzeigen
+  renderCatchLog();
+}
+// Lädt das Fang-Logbuch aus der DB und zeigt es chronologisch an
+async function renderCatchLog(){
+  const box=$("catchLog");
+  if(!box || !isHost() || !game) return;
+  try{
+    const {data}=await sb.from("catch_log").select()
+      .eq("game_id",game.id).order("caught_at",{ascending:true});
+    if(!data || !data.length){
+      box.innerHTML='<div style="color:#55555c;">Noch keine Fänge.</div>';
+      return;
+    }
+    box.innerHTML=data.map((e,i)=>{
+      const t=new Date(e.caught_at).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});
+      return `<div style="padding:5px 0;border-bottom:1px solid #1f1f22;">
+        <span style="color:#666;">${t}</span> · <b>${esc(e.hunter_name||"?")}</b> hat <b style="color:#ff7b72;">${esc(e.target_name||"?")}</b> gefangen</div>`;
+    }).join("");
+  }catch(e){
+    box.innerHTML='<div style="color:#55555c;">Logbuch nicht verfügbar (Tabelle anlegen?).</div>';
   }
 }
 function renderJoinToggle(){
@@ -1197,6 +1228,7 @@ async function purgeGameData(){
   purgeDone=true;  // verhindert Mehrfach-Löschung durch den 1-Sek-Timer
   const gid=game.id;
   try{ await sb.from("sightings").delete().eq("game_id", gid); }catch(e){}
+  try{ await sb.from("catch_log").delete().eq("game_id", gid); }catch(e){}
   try{ await sb.from("chat").delete().eq("game_id", gid); }catch(e){}
   try{ await sb.from("messages").delete().eq("game_id", gid); }catch(e){}
   try{ await sb.from("players").delete().eq("game_id", gid); }catch(e){}
@@ -1636,7 +1668,10 @@ function render(){
     visible = players.filter(p=>p.role!=="host" && !((globalSilentFor(p)||personalSilent(p)) && p.role==="target"));
   }
   else {
-    visible = players.filter(p=>p.role==="target");
+    // Target sieht nur sich selbst. Ausnahme: mit eigenem reveal/live-Joker
+    // (kommt bei Targets normalerweise nicht vor, aber zur Sicherheit konsistent)
+    if(iSeeLive || iSeeReveal) visible = players.filter(p=>p.role==="target");
+    else visible = players.filter(p=>p.id===me.id);
   }
   const useLive = me.role==="host";
   let withGeo = visible
@@ -1670,28 +1705,27 @@ function render(){
   $("playerList").innerHTML=players.map(p=>{
     const r=ROLES[p.role];
     const canCatch=p.role==="target"&&me.role==="hunter";
+    const canFree=p.role==="target"&&isHost();   // nur der Spielleiter darf freigeben
     // GPS-gestütztes Schnappen: Knopf wird erst klickbar, wenn der Hunter nah genug
     // am Target ist (Ziel 20 m + 5 m GPS-Puffer = 25 m). Die Distanz wird NICHT
     // angezeigt – der Knopf dient nur als Fang-Barriere gegen Schummeln, nicht als Peilhilfe.
     const CATCH_DIST=25;  // Meter (20 m Wunsch + 5 m Puffer)
     let catchBtn="";
-    if(canCatch){
-      if(p.caught){
-        // bereits geschnappt → "Frei"-Knopf (immer möglich)
+    if(p.caught){
+      // bereits geschnappt → "Frei"-Knopf nur für den Spielleiter
+      if(canFree){
         catchBtn=`<button class="catch-btn" style="background:#1c3a24;color:#7ee787" onclick="toggleCaught('${p.id}',true)">Frei</button>`;
+      }
+    } else if(canCatch){
+      // Distanz Hunter ↔ Target intern berechnen (beide brauchen Live-Standort)
+      let near=false;
+      if(myLat!=null && p.live_lat!=null){
+        near = distMeters(myLat,myLng,p.live_lat,p.live_lng) <= CATCH_DIST;
+      }
+      if(near){
+        catchBtn=`<button class="catch-btn" style="background:#3a1c1c;color:#ff7b72" onclick="toggleCaught('${p.id}',false)">Schnappen</button>`;
       }else{
-        // Distanz Hunter ↔ Target intern berechnen (beide brauchen Live-Standort)
-        let near=false;
-        if(myLat!=null && p.live_lat!=null){
-          near = distMeters(myLat,myLng,p.live_lat,p.live_lng) <= CATCH_DIST;
-        }
-        if(near){
-          // nah genug → Schnappen freigegeben (keine Distanz sichtbar)
-          catchBtn=`<button class="catch-btn" style="background:#3a1c1c;color:#ff7b72" onclick="toggleCaught('${p.id}',false)">Schnappen</button>`;
-        }else{
-          // zu weit weg → gesperrt, OHNE Meter-Angabe (kein Peilsender)
-          catchBtn=`<button class="catch-btn" disabled style="background:#1a1a1d;color:#666;opacity:.6">Schnappen</button>`;
-        }
+        catchBtn=`<button class="catch-btn" disabled style="background:#1a1a1d;color:#666;opacity:.6">Schnappen</button>`;
       }
     }
     return `<div class="row ${p.caught?"caught":""}">
@@ -1877,7 +1911,7 @@ window.toggleCaught=async(id,cur)=>{
     ? {caught:false, caught_at:null, caught_by:null}
     : {caught:true, caught_at:new Date().toISOString(), caught_by: (me?me.name:null)};
   await sb.from("players").update(patch).eq("id",id);
-  // Beim Schnappen: Meldung an Spielleiter + an das geschnappte Target
+  // Beim Schnappen: Meldung an Spielleiter + an das geschnappte Target + Logbuch-Eintrag
   if(!cur){
     const t=players.find(p=>p.id===id);
     const tName=t ? t.name : "Ein Target";
@@ -1887,6 +1921,12 @@ window.toggleCaught=async(id,cur)=>{
         {game_id:game.id,audience:"host",text:`🎯 ${tName} wurde von ${byName} geschnappt!`},
         {game_id:game.id,audience:"caught-one",target_id:id,text:"🚩 Du wurdest geschnappt! Begib dich zum Startpunkt."}
       ]);
+    }catch(e){}
+    // Dauerhaftes Logbuch (eigene Tabelle, bleibt bis zur Datenlöschung erhalten)
+    try{
+      await sb.from("catch_log").insert({
+        game_id:game.id, target_name:tName, hunter_name:byName, caught_at:new Date().toISOString()
+      });
     }catch(e){}
   }
 };
@@ -1939,7 +1979,9 @@ window.power=async(kind)=>{
     showPopup(onlyId ? (who+" aufgedeckt ✓") : "Alle Targets aufgedeckt ✓","");
     return;
   }
-  const until=new Date(Date.now()+10*60*1000).toISOString();
+  let secs=parseInt($("powerSecs").value)||600;
+  secs=Math.min(3600,Math.max(10,secs));
+  const until=new Date(Date.now()+secs*1000).toISOString();
   await sb.from("games").update({power_kind:kind,power_player:onlyId||null,power_until:until}).eq("id",game.id);
 };
 
@@ -1975,16 +2017,28 @@ window.assignJoker=async()=>{
   if(!who){ alert("Bitte zuerst eine Person oder Gruppe auswählen."); return; }
   const inf=JOKER_INFO[kind]||{label:kind};
 
-  // Empfänger bestimmen: einzelne Person oder eine ganze Gruppe
+  // Welche Rolle darf diesen Joker bekommen?
+  // reveal/live = nur Hunter · silence = nur Targets · freeze = beide
+  const allowedRole = (kind==="reveal"||kind==="live") ? "hunter"
+                    : (kind==="silence") ? "target"
+                    : null;  // freeze: beide
+
+  // Empfänger bestimmen
   let recipients=[];
   if(who==="all")            recipients=players.filter(p=>p.role!=="host");
   else if(who==="all-target") recipients=players.filter(p=>p.role==="target");
   else if(who==="all-hunter") recipients=players.filter(p=>p.role==="hunter");
   else { const p=players.find(x=>x.id===who); if(p) recipients=[p]; }
 
-  if(!recipients.length){ alert("Keine passenden Personen gefunden."); return; }
+  // Auf erlaubte Rolle einschränken
+  if(allowedRole) recipients=recipients.filter(p=>p.role===allowedRole);
 
-  // jedem Empfänger einen Joker in den Vorrat legen
+  if(!recipients.length){
+    const roleTxt = allowedRole==="hunter" ? "Hunter" : allowedRole==="target" ? "Targets" : "Spieler";
+    alert(`„${inf.label}" kann nur an ${roleTxt} vergeben werden – keine passende Person ausgewählt.`);
+    return;
+  }
+
   await Promise.all(recipients.map(p=>{
     const list=parseJokers(p);
     list.push({id:Math.random().toString(36).slice(2,9), kind, secs});
@@ -1992,10 +2046,8 @@ window.assignJoker=async()=>{
   }));
 
   let label;
-  if(who==="all")            label="alle Spieler";
-  else if(who==="all-target") label="alle Targets";
-  else if(who==="all-hunter") label="alle Hunter";
-  else                        label=recipients[0].name;
+  if(recipients.length>1) label=`${recipients.length} ${allowedRole==="hunter"?"Hunter":allowedRole==="target"?"Targets":"Spieler"}`;
+  else                    label=recipients[0].name;
   showPopup(`${inf.label} (${secs}s) an ${label} vergeben ✓`,"");
   await refreshAll();
 };
@@ -2246,9 +2298,20 @@ function startTimer(){
       $("timer").textContent=left>0?fmt(left):"00:00:00";
       $("timer").style.color=left<3600?"var(--orange)":"var(--text)";
       const hsHost=headstartLeft();
-      $("totalTime").textContent = (hsHost!=null && game.phase==="headstart")
-        ? ("🏃 Vorsprung läuft – noch "+fmt(hsHost).slice(3)+" (MM:SS)")
-        : "Du steuerst das Spiel – Live-Standorte alle 20 Sek.";
+      if(hsHost!=null && game.phase==="headstart"){
+        $("totalTime").textContent="🏃 Vorsprung läuft – noch "+fmt(hsHost).slice(3)+" (MM:SS)";
+      } else {
+        // Counter für den nächsten Standort-Ping auch dem Spielleiter zeigen
+        const p=activePower();
+        let pingTxt;
+        if(p==="silence") pingTxt="🔇 Funkstille – keine Übermittlung";
+        else if(p==="live") pingTxt="📡 Live-Tracking aktiv";
+        else {
+          const pl=pingCountdown();
+          pingTxt = (pl!=null) ? ("📍 Nächster Standort an Hunter in "+fmt(pl).slice(3)) : "📍 Standort-Übermittlung pausiert";
+        }
+        $("totalTime").textContent=pingTxt;
+      }
       autoPhase(left);
       // Schrumpfende Zone: prüfen/ausführen (verstrichene Spielzeit in Sek)
       if(game.started_at){
