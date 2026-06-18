@@ -865,6 +865,33 @@ function clearSession(){
   try{ localStorage.removeItem("mw_session"); localStorage.removeItem("mw_geo"); }catch(e){}
 }
 
+// ---------- Datenschutz: Daten nur für die Spieldauer aufbewahren ----------
+// Entfernt nur die Standortdaten (live + freigegeben) eines Spielers. Genutzt,
+// wenn jemand das Spiel aktiv verlässt – dann ist sofort keine Position mehr da.
+async function clearMyLocation(){
+  if(!me || !sb) return;
+  try{
+    await sb.from("players").update({
+      live_lat:null, live_lng:null, lat:null, lng:null
+    }).eq("id", me.id);
+  }catch(e){}
+}
+
+// Löscht ALLE Daten eines Spiels aus der Datenbank: Standorte, Spieler, Sichtungen,
+// Chat, Durchsagen und das Spiel selbst. Wird 1 Std nach Spielende zentral vom
+// Spielleiter ausgelöst. Reihenfolge: erst die abhängigen Tabellen, dann das Spiel.
+let purgeDone=false;
+async function purgeGameData(){
+  if(purgeDone || !sb || !game) return;
+  purgeDone=true;  // verhindert Mehrfach-Löschung durch den 1-Sek-Timer
+  const gid=game.id;
+  try{ await sb.from("sightings").delete().eq("game_id", gid); }catch(e){}
+  try{ await sb.from("chat").delete().eq("game_id", gid); }catch(e){}
+  try{ await sb.from("messages").delete().eq("game_id", gid); }catch(e){}
+  try{ await sb.from("players").delete().eq("game_id", gid); }catch(e){}
+  try{ await sb.from("games").delete().eq("id", gid); }catch(e){}
+}
+
 // Zeigt den Spielbildschirm und startet alle Abläufe
 function enterGame(){
   $("login").classList.add("hidden");
@@ -1591,7 +1618,7 @@ function updatePowerBar(){
 // ---------- Timer & automatischer Phasen-Ablauf ----------
 function startTimer(){
   clearInterval(timerInt);
-  timerInt=setInterval(()=>{
+  timerInt=setInterval(async ()=>{
     // Steuerungs-Knopf nur dem Spielleiter zeigen, solange nicht gestartet
     $("hostTimer").classList.toggle("hidden", !(isHost() && !game.started_at));
 
@@ -1620,7 +1647,13 @@ function startTimer(){
         const elapsedHost=(Date.now()-new Date(game.started_at))/1000;
         tickShrink(elapsedHost);
       }
-      if(left <= -3600){ clearSession(); alert("Das Spiel ist beendet. Die Sitzung wird geschlossen."); location.reload(); }
+      if(left <= -3600){
+        // 1 Std nach Spielende: Spielleiter löscht zentral ALLE Daten (Datenschutz)
+        await purgeGameData();
+        clearSession();
+        alert("Das Spiel ist beendet. Alle Spiel- und Standortdaten wurden gelöscht.");
+        location.reload();
+      }
       return;
     }
 
@@ -1649,8 +1682,9 @@ function startTimer(){
     if(isHost()) autoPhase(left);
     // 1 Stunde nach Spielende: Sitzung automatisch schließen
     if(left <= -3600){
+      await clearMyLocation();   // eigene Standortdaten entfernen
       clearSession();
-      alert("Das Spiel ist beendet. Die Sitzung wird geschlossen.");
+      alert("Das Spiel ist beendet. Die Sitzung wird geschlossen und die Daten gelöscht.");
       location.reload();
     }
   },1000);
@@ -1700,15 +1734,21 @@ $("btnLeave").onclick=async()=>{
   if(!confirm("Spiel wirklich verlassen?"))return;
   if(watchId)navigator.geolocation.clearWatch(watchId);
   clearInterval(pingInt); clearInterval(timerInt);
-  clearSession();  // bewusst verlassen → Sitzung löschen
   if(me){
-    // Spielleiter informieren, dass dieser Spieler das Spiel verlässt (außer der Host selbst geht)
-    if(me.role!=="host"){
+    if(isHost()){
+      // Spielleiter: anbieten, das ganze Spiel zu beenden und alle Daten zu löschen
+      if(confirm("Als Spielleiter: Soll das Spiel für ALLE beendet und sämtliche Daten (Standorte, Spieler, Chat) sofort gelöscht werden?\n\nOK = alles löschen · Abbrechen = nur du verlässt das Spiel")){
+        await purgeGameData();
+      }
+    }else{
+      // Normaler Spieler: Hinweis an den Spielleiter + eigenen Datensatz (inkl. Standorte) löschen
       const rolle = me.role==="hunter" ? "Hunter" : "Target";
       try{ await sb.from("messages").insert({game_id:game.id,audience:"host",text:`${me.name} (${rolle}) hat das Spiel verlassen.`}); }catch(e){}
+      await clearMyLocation();                          // Standorte sofort entfernen
+      await sb.from("players").delete().eq("id",me.id); // aus der Spielerliste entfernen
     }
-    await sb.from("players").delete().eq("id",me.id);  // aus der Spielerliste entfernen
   }
+  clearSession();  // bewusst verlassen → lokale Sitzung löschen
   location.reload();
 };
 
