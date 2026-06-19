@@ -115,6 +115,32 @@
 
   .power-bar{margin:10px 14px 0;padding:11px 16px;border-radius:12px;background:#10243a;color:#7aa2f7;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;border:1px solid #1e3a5c;}
   .power-bar.ice{background:#0d3b5c;color:#bfe6ff;border-color:#7ec8ff;}
+
+  /* Schwebender Regel-Button + Panel */
+  #rulesBtn{position:fixed;top:10px;right:10px;z-index:900;width:42px;height:42px;border-radius:50%;
+    background:linear-gradient(180deg,var(--orange-bright),var(--orange-deep));color:#1a0d00;border:none;
+    font-size:20px;box-shadow:0 3px 12px rgba(255,106,0,.45);cursor:pointer;}
+  .rules-panel{position:fixed;inset:0;z-index:950;background:rgba(0,0,0,.7);backdrop-filter:blur(3px);
+    display:flex;justify-content:center;align-items:flex-start;padding:14px;overflow-y:auto;}
+  .rules-sheet{background:var(--panel);border:1px solid var(--orange-deep);border-radius:16px;
+    max-width:560px;width:100%;margin:48px 0 24px;position:relative;box-shadow:0 12px 40px rgba(0,0,0,.6);}
+  .rules-close{position:absolute;top:10px;right:12px;background:rgba(255,255,255,.1);color:var(--text);
+    border:none;width:32px;height:32px;border-radius:50%;font-size:15px;cursor:pointer;}
+  .rules-head{padding:18px 20px 12px;border-bottom:2px solid var(--orange);display:flex;flex-direction:column;gap:2px;}
+  .rules-head b{font-family:var(--display);font-weight:700;letter-spacing:.05em;font-size:22px;color:var(--orange);}
+  .rules-head span{font-family:var(--display);font-weight:600;letter-spacing:.12em;font-size:10px;color:var(--muted);}
+  .rules-body{padding:14px 20px 22px;color:var(--text);font-size:13.5px;line-height:1.5;}
+  .rules-body h4{font-family:var(--display);font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--orange);font-size:14px;margin:18px 0 6px;}
+  .rules-body ul,.rules-body ol{margin:0 0 4px;padding-left:20px;}
+  .rules-body li{margin-bottom:6px;}
+  .rules-body b{color:#fff;}
+  .rules-intro{color:var(--muted);margin:4px 0 0;}
+  .rules-note{color:var(--muted);font-size:12px;margin:0 0 4px;}
+  .rules-warn{background:#1f0d08;border:1px solid var(--red);border-radius:10px;padding:11px 13px;margin:14px 0 4px;
+    font-size:12.5px;line-height:1.45;color:#ffd9cc;}
+  .rules-warn b{color:#ff9a7a;}
+  .rules-foot{text-align:center;color:var(--orange);font-family:var(--display);font-weight:700;font-size:15px;margin-top:18px;}
   .power-grid{display:flex;flex-direction:column;gap:8px;}
   .power-grid button{background:#161619;color:var(--text);border:1px solid var(--line);padding:12px;border-radius:10px;font-weight:700;font-size:14px;text-align:left;}
   .field-grid{display:flex;flex-direction:column;gap:8px;}
@@ -182,6 +208,84 @@
 </style>
 </head>
 <body>
+
+<!-- Schwebender Regel-Button (oben rechts, auf allen Bildschirmen) -->
+<button id="rulesBtn" onclick="toggleRules()" aria-label="Spielregeln">📖</button>
+
+<!-- Aufklappbares Regel-Panel -->
+<div id="rulesPanel" class="rules-panel hidden">
+  <div class="rules-sheet">
+    <button class="rules-close" onclick="toggleRules()" aria-label="Schließen">✕</button>
+    <div class="rules-head">
+      <b>MOST WANTED</b><span>STADTJAGD · SPIELREGELN</span>
+    </div>
+    <div class="rules-body">
+
+      <p class="rules-intro">Eine Gruppe Flüchtiger (<b>Targets</b>) versucht, möglichst lange der Jagd zu entkommen. Die <b>Hunter</b> machen Jagd auf sie. Der <b>Spielleiter</b> steuert das Spiel. Wer am längsten überlebt oder die meisten Targets fängt, gewinnt.</p>
+
+      <div class="rules-warn">⛔ <b>WICHTIGSTE REGEL: KEINE GEBÄUDE!</b><br>Es darf sich nicht in Gebäuden versteckt werden – egal ob Wohnhäuser, Geschäfte, Garagen, Tiefgaragen oder andere geschlossene Räume. Das Spiel findet ausschließlich im Freien statt. Wer sich in einem Gebäude versteckt, gilt als geschnappt.</div>
+
+      <h4>Die Rollen</h4>
+      <ul>
+        <li>👟 <b>Targets</b> – die Gejagten. Ziel: bis zum Spielende nicht geschnappt werden. Teilen ihren Standort in der App.</li>
+        <li>🎯 <b>Hunter</b> – die Jäger. Ziel: möglichst viele Targets fangen. Sehen die Target-Standorte im festen Takt.</li>
+        <li>🎛️ <b>Spielleiter</b> – neutral. Richtet das Spiel ein, startet, sendet Durchsagen, löst Spezialaktionen aus. Spielt nicht mit.</li>
+      </ul>
+
+      <h4>So läuft das Spiel ab</h4>
+      <ol>
+        <li><b>Vorsprung:</b> Die Targets bekommen am Anfang einen zeitlichen Vorsprung, um sich zu verteilen. Die Hunter warten – auch Annäherungs-Warnungen kommen erst danach.</li>
+        <li><b>Jagd:</b> Die Hunter starten. Der Target-Standort wird im eingestellten Takt als Momentaufnahme übermittelt – dazwischen sehen die Hunter nur die letzte bekannte Position.</li>
+        <li><b>Finale:</b> In der Schlussphase wird der Standort in einem kürzeren Takt übermittelt – die Jagd wird enger.</li>
+        <li><b>Ende:</b> Das Spiel endet, wenn die Zeit abläuft oder kein Target mehr übrig ist. Danach folgt die Siegerehrung am Startpunkt.</li>
+      </ol>
+
+      <h4>📍 Standort & App</h4>
+      <ul>
+        <li>Jeder aktiviert <b>Standort teilen</b> – einmal aktiviert, bleibt es an.</li>
+        <li>Die App muss <b>geöffnet</b> bleiben und das <b>Display an</b> – bei gesperrtem/schwarzem Bildschirm pausiert die Standort-Übermittlung.</li>
+        <li>Targets sehen die Hunter nie – werden aber gewarnt, wenn ein Hunter näher als die eingestellte Distanz kommt.</li>
+        <li>Der Spielleiter kann ein <b>Spielfeld</b> festlegen, das sich im Spielverlauf verkleinern kann (schrumpfende Zone).</li>
+      </ul>
+
+      <h4>🚨 Gefangen werden</h4>
+      <ul>
+        <li>Ein Target gilt als <b>geschnappt</b>, wenn ein Hunter es im echten Leben erreicht und in der App markiert.</li>
+        <li>Nur der <b>Spielleiter</b> kann ein Target wieder freigeben – nicht der Hunter.</li>
+        <li>Geschnappte Targets <b>scheiden aus</b> und gehen zum Startpunkt.</li>
+      </ul>
+
+      <h4>Spezialaktionen des Spielleiters</h4>
+      <p class="rules-note">Dauer und Ziel (alle oder einzeln) sind frei einstellbar.</p>
+      <ul>
+        <li>📡 <b>Live-Tracking</b> – Hunter sehen die Standorte für die eingestellte Zeit durchgehend live.</li>
+        <li>🔇 <b>Funkstille</b> – für die eingestellte Zeit wird kein Standort übermittelt; die Targets sind unsichtbar.</li>
+        <li>🎯 <b>Sofort aufdecken</b> – ein einmaliger Standort-Ping; bleibt bis zum nächsten regulären Standort stehen.</li>
+        <li>❄️ <b>Einfrieren</b> – eine Person/Gruppe wird eingefroren und bekommt eine Eiswürfel-Meldung; darf sich nicht bewegen.</li>
+      </ul>
+
+      <h4>🃏 Joker (vom Spielleiter zugewiesen)</h4>
+      <p class="rules-note">Der Spielleiter vergibt Joker; jeder löst seine Joker selbst aus.</p>
+      <ul>
+        <li>❄️ <b>Einfrieren</b> – friert den nächstgelegenen Gegner ein (Target friert Hunter, Hunter friert Target).</li>
+        <li>🎯 <b>Alle aufdecken</b> – nur Hunter: einmalige Momentaufnahme aller Targets auf der eigenen Karte.</li>
+        <li>📡 <b>Live-Standort</b> – nur Hunter: sieht die Targets für die eingestellte Zeit live.</li>
+        <li>🔇 <b>Funkstille</b> – nur Targets: macht sich selbst für die eingestellte Zeit unsichtbar.</li>
+      </ul>
+
+      <h4>Fairplay</h4>
+      <ul>
+        <li><b>Im Spielgebiet bleiben</b> – der Spielleiter legt die Grenze fest.</li>
+        <li><b>Keine Autos / öffentlichen Verkehrsmittel</b>, außer der Spielleiter erlaubt es.</li>
+        <li><b>Aufeinander Acht geben:</b> Verkehr, andere Menschen, keine gefährlichen Wege.</li>
+        <li>Den <b>Anweisungen des Spielleiters</b> folgen. Regeln können angepasst werden.</li>
+      </ul>
+
+      <p class="rules-foot">Viel Spaß und faires Spiel!</p>
+    </div>
+  </div>
+</div>
+
 
 <!-- ============================================================
      LOGIN-BILDSCHIRM
@@ -1558,6 +1662,9 @@ function showModal(text, icon, mode){
 }
 window.closeModal=()=>{ $("modal").classList.add("hidden"); };
 
+// Regel-Panel auf/zu
+window.toggleRules=()=>{ $("rulesPanel").classList.toggle("hidden"); };
+
 // Großes Eiswürfel-Modal mit Countdown. Lässt sich erst schließen, wenn die
 // Zeit abgelaufen ist; schließt danach automatisch mit "Weiter geht's".
 let freezeCountdownInt=null;
@@ -2012,6 +2119,11 @@ window.power=async(kind)=>{
   secs=Math.min(3600,Math.max(10,secs));
   const until=new Date(Date.now()+secs*1000).toISOString();
   await sb.from("games").update({power_kind:kind,power_player:onlyId||null,power_until:until}).eq("id",game.id);
+  // Bestätigung für den Spielleiter
+  const whoTxt = onlyId ? (players.find(p=>p.id===onlyId)?.name||"ein Target") : "alle Targets";
+  const durTxt = secs>=60 ? (Math.round(secs/60)+" Min") : (secs+" Sek");
+  const label = kind==="live" ? "📡 Live-Tracking" : "🔇 Funkstille";
+  showPopup(`${label} für ${whoTxt} aktiviert (${durTxt}) ✓`,"");
 };
 
 // Spielleiter: Spieler einfrieren – Hunter, Targets oder alle; einzeln oder ganze Gruppe.
@@ -2187,11 +2299,32 @@ async function sendLive(){
 // FREIGABE: den Standort für die Hunter freigeben (15 Min / Finale 5 Min)
 let lastReleaseWindow=-1;
 async function releaseLocation(){
-  if(myLat==null) return;
   // Persönlicher Funkstille-Joker aktiv? Dann keine Freigabe an die Hunter.
   if(me.silent_until && new Date(me.silent_until)>new Date()) return;
-  me.lat=myLat; me.lng=myLng;
-  await sb.from("players").update({lat:myLat,lng:myLng}).eq("id",me.id);
+  // WICHTIG: zum Freigabe-Zeitpunkt eine FRISCHE Ortung holen, damit nicht der
+  // zuletzt zwischengespeicherte (evtl. veraltete) Standort übermittelt wird.
+  const fix = await freshPosition();
+  let la = fix ? fix.lat : myLat;
+  let ln = fix ? fix.lng : myLng;
+  if(la==null) return;
+  myLat=la; myLng=ln;            // lokalen Stand aktualisieren
+  me.lat=la; me.lng=ln;
+  // Live UND freigegebene Position gemeinsam auf den frischen Wert setzen
+  await sb.from("players").update({
+    lat:la, lng:ln, live_lat:la, live_lng:ln, updated_at:new Date().toISOString()
+  }).eq("id",me.id);
+}
+
+// Holt eine frische GPS-Position (Promise). maximumAge:0 erzwingt einen neuen Fix.
+function freshPosition(){
+  return new Promise((resolve)=>{
+    if(!navigator.geolocation){ resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos)=>resolve({lat:pos.coords.latitude, lng:pos.coords.longitude}),
+      ()=>resolve(null),
+      {enableHighAccuracy:true, maximumAge:0, timeout:8000}
+    );
+  });
 }
 
 // Loops: live alle 20 Sek + Freigabe genau im DB-Takt (für alle synchron)
