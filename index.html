@@ -141,6 +141,16 @@
     font-size:12.5px;line-height:1.45;color:#ffd9cc;}
   .rules-warn b{color:#ff9a7a;}
   .rules-foot{text-align:center;color:var(--orange);font-family:var(--display);font-weight:700;font-size:15px;margin-top:18px;}
+
+  /* Großer Start-Countdown */
+  .cd-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.82);backdrop-filter:blur(2px);
+    display:flex;flex-direction:column;justify-content:center;align-items:center;}
+  .cd-label{font-family:var(--display);font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--orange);font-size:22px;margin-bottom:6px;text-align:center;padding:0 20px;}
+  .cd-num{font-family:var(--display);font-weight:700;color:#fff;font-size:160px;line-height:1;
+    text-shadow:0 0 40px rgba(255,106,0,.7);animation:cdpop .6s ease-out;}
+  @keyframes cdpop{0%{transform:scale(.4);opacity:0;}40%{transform:scale(1.15);opacity:1;}100%{transform:scale(1);opacity:1;}}
+  .cd-num.go{color:var(--orange);font-size:120px;}
   .power-grid{display:flex;flex-direction:column;gap:8px;}
   .power-grid button{background:#161619;color:var(--text);border:1px solid var(--line);padding:12px;border-radius:10px;font-weight:700;font-size:14px;text-align:left;}
   .field-grid{display:flex;flex-direction:column;gap:8px;}
@@ -208,6 +218,12 @@
 </style>
 </head>
 <body>
+
+<!-- Großer Start-Countdown (3-2-1) -->
+<div id="countdownOverlay" class="cd-overlay hidden">
+  <div class="cd-label" id="cdLabel"></div>
+  <div class="cd-num" id="cdNum">3</div>
+</div>
 
 <!-- Schwebender Regel-Button (oben rechts, auf allen Bildschirmen) -->
 <button id="rulesBtn" onclick="toggleRules()" aria-label="Spielregeln">📖</button>
@@ -1621,6 +1637,18 @@ function onGameChange(payload){
       }
     }
   }
+  // ----- Start-Countdowns -----
+  const prevPhase=lastPhaseForOver;
+  // 1) Spielstart: Lobby -> Vorsprung (oder direkt Jagd). 3-2-1, dann beginnt der Vorsprung.
+  if((g.phase==="headstart" || g.phase==="hunt") && (prevPhase==="lobby" || prevPhase==null) && g.started_at){
+    if(g.phase==="headstart") runCountdown(3, "Spiel startet – Vorsprung der Targets!", "LOS!");
+    else runCountdown(3, "Spiel startet – die Jagd beginnt!", "LOS!");
+  }
+  // 2) Vorsprung vorbei: Hunter dürfen los.
+  if(g.phase==="hunt" && prevPhase==="headstart"){
+    runCountdown(3, "Vorsprung vorbei – Hunter starten!", "JAGD!");
+  }
+
   // Phasenwechsel zu "over": Siegerehrungs-Meldung an die noch Übrigen
   if(g.phase==="over" && lastPhaseForOver!=="over"){
     lastPhaseForOver="over";
@@ -1650,26 +1678,80 @@ function showPopup(text, audience){
   popupTimer=setTimeout(()=>el.classList.add("hidden"), 6000);
 }
 
-// Auffälliges Melde-Fenster – bleibt offen, bis es geschlossen wird
+// Auffälliges Melde-Fenster – bleibt offen, bis es geschlossen wird.
+// Mehrere Nachrichten werden in einer Warteschlange nacheinander gezeigt,
+// damit sich gleichzeitig eintreffende Meldungen nicht überschreiben.
 // mode: "ice" für die Eiswürfel-Optik (Hunter eingefroren)
+let modalQueue=[];
+let modalOpen=false;
 function showModal(text, icon, mode){
-  $("modalText").textContent=text;
-  $("modalIcon").textContent=icon||"📢";
-  $("modalBox").classList.toggle("ice", mode==="ice");
-  $("modalFrost").classList.toggle("hidden", mode!=="ice");
+  modalQueue.push({text, icon:icon||"📢", mode});
+  if(!modalOpen) showNextModal();
+}
+function showNextModal(){
+  if(!modalQueue.length){ modalOpen=false; return; }
+  modalOpen=true;
+  const m=modalQueue.shift();
+  $("modalText").textContent=m.text;
+  $("modalIcon").textContent=m.icon;
+  $("modalBox").classList.toggle("ice", m.mode==="ice");
+  $("modalFrost").classList.toggle("hidden", m.mode!=="ice");
+  // Buttons (könnten vom Freeze-Modal verstellt sein) zurücksetzen
+  const x=$("modalX"), ok=$("modalOk");
+  if(x) x.style.display="";
+  if(ok){ ok.disabled=false; ok.style.opacity="1"; ok.textContent="Verstanden"; }
+  // Restzähler-Anzeige der Warteschlange
+  if(modalQueue.length>0){ $("modalText").textContent = m.text + "\n\n(noch "+modalQueue.length+" weitere Meldung"+(modalQueue.length>1?"en":"")+")"; }
   $("modal").classList.remove("hidden");
   alertSignal();  // Ton + Vibration, damit man es auch in der Tasche merkt
 }
-window.closeModal=()=>{ $("modal").classList.add("hidden"); };
+window.closeModal=()=>{
+  $("modal").classList.add("hidden");
+  // kurze Pause, dann die nächste Meldung aus der Warteschlange
+  setTimeout(showNextModal, 250);
+};
 
 // Regel-Panel auf/zu
 window.toggleRules=()=>{ $("rulesPanel").classList.toggle("hidden"); };
+
+// Großer Countdown (3-2-1-LOS). label oben, goText am Ende.
+let cdActive=false;
+function runCountdown(seconds, label, goText){
+  if(cdActive) return;            // nicht doppelt starten
+  cdActive=true;
+  const ov=$("countdownOverlay"), num=$("cdNum"), lab=$("cdLabel");
+  lab.textContent=label||"";
+  let n=seconds;
+  const show=(v,go)=>{
+    num.classList.remove("go"); void num.offsetWidth;  // Animation neu auslösen
+    num.textContent=v;
+    if(go) num.classList.add("go");
+  };
+  show(n,false);
+  ov.classList.remove("hidden");
+  try{ if(navigator.vibrate) navigator.vibrate(60); }catch(e){}
+  const tick=setInterval(()=>{
+    n--;
+    if(n>0){
+      show(n,false);
+      try{ if(navigator.vibrate) navigator.vibrate(60); }catch(e){}
+    } else if(n===0){
+      show(goText||"LOS!",true);
+      try{ if(navigator.vibrate) navigator.vibrate([120,60,120]); }catch(e){}
+    } else {
+      clearInterval(tick);
+      ov.classList.add("hidden");
+      cdActive=false;
+    }
+  },1000);
+}
 
 // Großes Eiswürfel-Modal mit Countdown. Lässt sich erst schließen, wenn die
 // Zeit abgelaufen ist; schließt danach automatisch mit "Weiter geht's".
 let freezeCountdownInt=null;
 function showFreezeModal(secs){
   clearInterval(freezeCountdownInt);
+  modalOpen=true;   // blockiert die Warteschlange, bis der Freeze vorbei ist
   const box=$("modalBox"), x=$("modalX"), ok=$("modalOk");
   box.classList.add("ice");
   $("modalFrost").classList.remove("hidden");
@@ -2569,8 +2651,14 @@ async function autoPhase(left){
   else if(head>0 && elapsed<head) want="headstart";
   else want="hunt";
   if(want!==game.phase && phaseWriteLock!==want){
+    const fromPhase=game.phase;
     phaseWriteLock=want;                 // verhindert mehrfaches Schreiben pro Sekunde
     game.phase=want;                     // sofort lokal setzen, damit die Anzeige stimmt
+    // Countdown beim Host direkt auslösen (sein eigenes Realtime-Event käme evtl. zu spät)
+    if(want==="hunt" && fromPhase==="headstart"){
+      runCountdown(3, "Vorsprung vorbei – Hunter starten!", "JAGD!");
+      lastPhaseForOver="hunt";
+    }
     const patch={phase:want};
     // Beim Übergang zu "over" durch alle-gefangen die Endzeit auf jetzt setzen,
     // damit die Überlebenszeiten korrekt bis hierhin gerechnet werden.
@@ -2609,6 +2697,10 @@ window.startGame=async()=>{
     }
   }
   await sb.from("games").update(patch).eq("id",game.id);
+  // Start-Countdown beim Host direkt auslösen (sein eigenes Realtime-Event käme evtl. zu spät)
+  lastPhaseForOver=firstPhase;
+  if(firstPhase==="headstart") runCountdown(3, "Spiel startet – Vorsprung der Targets!", "LOS!");
+  else runCountdown(3, "Spiel startet – die Jagd beginnt!", "LOS!");
 };
 
 // ---------- Verlassen ----------
