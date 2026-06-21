@@ -151,6 +151,10 @@
     text-shadow:0 0 40px rgba(255,106,0,.7);animation:cdpop .6s ease-out;}
   @keyframes cdpop{0%{transform:scale(.4);opacity:0;}40%{transform:scale(1.15);opacity:1;}100%{transform:scale(1);opacity:1;}}
   .cd-num.go{color:var(--orange);font-size:120px;}
+  .rolebtns{display:inline-flex;gap:4px;}
+  .rolebtn{background:#1a1a1d;border:1px solid var(--line);color:var(--muted);border-radius:7px;
+    padding:5px 8px;font-size:13px;cursor:pointer;}
+  .rolebtn.on{background:#0a0a0b;font-weight:700;}
   .power-grid{display:flex;flex-direction:column;gap:8px;}
   .power-grid button{background:#161619;color:var(--text);border:1px solid var(--line);padding:12px;border-radius:10px;font-weight:700;font-size:14px;text-align:left;}
   .field-grid{display:flex;flex-direction:column;gap:8px;}
@@ -321,12 +325,8 @@
     <label>DEIN NAME</label>
     <input id="inName" placeholder="Wie heißt du?" maxlength="24" />
   </div>
-  <div class="field">
-    <label>DEINE ROLLE</label>
-    <div class="role-pick">
-      <button id="rTarget" class="on-target">Target (Flucht)</button>
-      <button id="rHunter">Hunter (Jagd)</button>
-    </div>
+  <div style="font-size:12px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:11px;margin-bottom:4px;">
+    🎲 Du trittst <b>ohne feste Rolle</b> bei und landest im Wartebereich. Der Spielleiter teilt die Rollen (Target oder Hunter) vor dem Start zu.
   </div>
   <button id="btnJoin" class="primary">Beitreten</button>
   <button id="btnCreate" class="ghostlink">Neues Spiel erstellen (als Spielleiter)</button>
@@ -547,6 +547,19 @@
         <button onclick="clearField()" class="field-clear">Spielfeld entfernen</button>
       </div>
 
+      <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">🎲 ROLLEN VERTEILEN</div>
+      <div style="font-size:11px;color:#55555c;margin-bottom:8px;">Lege fest, wie viele Targets und Hunter es geben soll, und verteile die Rollen zufällig auf die wartenden Spieler. Du kannst danach einzelne Rollen ändern.</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <span style="font-size:12px;color:var(--text);">🎯 Targets</span>
+        <input id="distTargets" type="number" min="0" max="50" step="1" value="2" style="width:64px;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:9px;" />
+        <span style="font-size:12px;color:var(--text);margin-left:6px;">🥷 Hunter</span>
+        <input id="distHunters" type="number" min="0" max="50" step="1" value="4" style="width:64px;background:#0a0a0b;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:9px;" />
+      </div>
+      <div id="distInfo" style="font-size:11px;color:#55555c;margin-bottom:8px;"></div>
+      <div class="power-grid">
+        <button onclick="distributeRoles()" style="background:#2a1f3d;color:#c4a8ff;border-color:#7c4dff;">🎲 Rollen verteilen</button>
+      </div>
+
       <div style="font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600;">BEITRITT</div>
       <button id="btnJoinToggle" onclick="toggleJoin()" class="join-toggle">Beitritt freigeben</button>
       <div style="font-size:11px;color:#55555c;margin-top:6px;">Während des Spiels ist der Beitritt normalerweise gesperrt. Hier kannst du ihn kurz öffnen, falls jemand neu rein muss – und danach wieder schließen.</div>
@@ -645,6 +658,7 @@ const ROLES = {
   target:{label:"Target",color:"#f4c430",icon:"👟"},
   hunter:{label:"Hunter",color:"#ef4444",icon:"🎯"},
   host:{label:"Spielleiter",color:"#a78bfa",icon:"🎛️"},
+  pending:{label:"wartet…",color:"#9a8f82",icon:"⏳"},
 };
 
 let sb=null, me=null, game=null, players=[], sightings=[];
@@ -1058,8 +1072,7 @@ function configOk(){
 }
 
 // ---------- Login UI ----------
-$("rTarget").onclick=()=>{chosenRole="target";$("rTarget").className="on-target";$("rHunter").className="";};
-$("rHunter").onclick=()=>{chosenRole="hunter";$("rHunter").className="on-hunter";$("rTarget").className="";};
+// Rollenwahl entfällt beim Beitritt – die Rolle wird vom Spielleiter zugeteilt.
 // Warn-Distanz: Auswahl-Buttons (200/500/1000) ODER eigener Wert im Eingabefeld
 [...document.querySelectorAll("#warnPick button")].forEach(b=>{
   b.onclick=()=>{
@@ -1300,12 +1313,10 @@ function guard(){
 
 async function joinGame(g,name,asHost){
   game=g;
-  // Der Ersteller bekommt die Rolle "host", normale Spieler ihre gewählte Rolle.
-  const role = asHost ? "host" : chosenRole;
-  // joker_used=false bedeutet "Joker verfügbar". Targets bekommen beim Beitritt
-  // einen Joker, wenn das Spiel ihn aktiviert hat; sonst startet ohne (der Host
-  // kann ihn später einzeln zuweisen). Hunter/Host brauchen keinen.
-  const startJokerUsed = !(role==="target" && g.joker_enabled);
+  // Der Ersteller bekommt "host", normale Spieler treten OHNE Rolle bei ("pending").
+  // Der Spielleiter teilt Target/Hunter später per "Rollen verteilen" zu.
+  const role = asHost ? "host" : "pending";
+  const startJokerUsed = true;  // bei der Zuteilung wird das passend gesetzt
   const {data,error}=await sb.from("players")
     .insert({game_id:g.id,name,role,joker_used:startJokerUsed,jokers:"[]"}).select().single();
   if(error){showErr("Beitritt fehlgeschlagen: "+error.message);return;}
@@ -1463,7 +1474,18 @@ async function refreshAll(){
   // gefunden wurde UND dieselbe Rolle hat. Sonst bleibt me unverändert bestehen.
   if(me && players.length){
     const fresh=players.find(p=>p.id===me.id);
-    if(fresh && fresh.role===me.role) me=fresh;
+    if(fresh){
+      const roleChanged = fresh.role!==me.role;
+      const oldRole=me.role;
+      me=fresh;   // immer aktualisieren, auch bei Rollenwechsel (Zuteilung durch Host)
+      if(roleChanged && oldRole && fresh.role!=="host"){
+        // Spieler über seine (neue) Rolle informieren
+        if(fresh.role==="target") showModal("Du bist ein TARGET (Flucht)! 👟 Entkomme den Huntern so lange wie möglich.", "👟");
+        else if(fresh.role==="hunter") showModal("Du bist ein HUNTER (Jagd)! 🎯 Schnapp dir die Targets.", "🎯");
+        // Karte/Anzeige neu aufbauen, da sich die Sicht je nach Rolle ändert
+        try{ render(); }catch(e){}
+      }
+    }
   }
   // Fallback: ein verpasstes Einfrieren nachholen (falls das Echtzeit-Event ausblieb).
   // Nur einmal pro Aktion und nur, solange es noch läuft.
@@ -1712,6 +1734,45 @@ window.closeModal=()=>{
 // Regel-Panel auf/zu
 window.toggleRules=()=>{ $("rulesPanel").classList.toggle("hidden"); };
 
+// Spielleiter: Rollen zufällig nach Verteilungsschlüssel zuteilen
+window.distributeRoles=async()=>{
+  if(!isHost()) return;
+  const nT=Math.max(0,parseInt($("distTargets").value)||0);
+  const nH=Math.max(0,parseInt($("distHunters").value)||0);
+  // alle Nicht-Host-Spieler (auch schon zugeteilte werden neu gemischt)
+  const pool=players.filter(p=>p.role!=="host");
+  if(!pool.length){ alert("Es sind noch keine Spieler im Wartebereich."); return; }
+  if(nT+nH < pool.length){
+    if(!confirm(`Du verteilst ${nT} Targets + ${nH} Hunter = ${nT+nH} Rollen, aber es sind ${pool.length} Spieler da. Die überzähligen bleiben ohne Rolle. Trotzdem verteilen?`)) return;
+  }
+  if(nT+nH > pool.length){
+    if(!confirm(`Du hast mehr Rollen (${nT+nH}) als Spieler (${pool.length}) eingestellt. Es werden nur ${pool.length} Spieler verteilt. Fortfahren?`)) return;
+  }
+  // zufällig mischen
+  const shuffled=[...pool].sort(()=>Math.random()-0.5);
+  const updates=[];
+  let ti=0, hi=0;
+  shuffled.forEach((p,idx)=>{
+    let role="pending";
+    if(ti<nT){ role="target"; ti++; }
+    else if(hi<nH){ role="hunter"; hi++; }
+    // Targets bekommen einen Funkstille-Joker, falls aktiviert
+    const jokerUsed = !(role==="target" && game.joker_enabled);
+    updates.push(sb.from("players").update({role, joker_used:jokerUsed}).eq("id",p.id));
+  });
+  await Promise.all(updates);
+  showPopup(`Rollen verteilt: ${ti} Targets, ${hi} Hunter ✓`,"");
+  await refreshAll();
+};
+
+// Spielleiter: einzelne Rolle manuell ändern
+window.setRole=async(playerId, role)=>{
+  if(!isHost()) return;
+  const jokerUsed = !(role==="target" && game.joker_enabled);
+  await sb.from("players").update({role, joker_used:jokerUsed}).eq("id",playerId);
+  await refreshAll();
+};
+
 // Großer Countdown (3-2-1-LOS). label oben, goText am Ende.
 let cdActive=false;
 function runCountdown(seconds, label, goText){
@@ -1881,7 +1942,12 @@ function alertSignal(){
 // ---------- Render ----------
 function render(){
   const ph=PHASES.find(p=>p.id===game.phase)||PHASES[0];
-  $("phaseDesc").textContent=ph.desc + (isHost()?"  ·  du bist Spielleiter":"");
+  // Wartebereich-Hinweis für Spieler ohne zugeteilte Rolle
+  if(me && me.role==="pending"){
+    $("phaseDesc").textContent="⏳ Du bist im Wartebereich – der Spielleiter teilt dir gleich eine Rolle zu.";
+  } else {
+    $("phaseDesc").textContent=ph.desc + (isHost()?"  ·  du bist Spielleiter":"");
+  }
   renderScoreboard();
   renderChat();
   // Spielleiter-Steuerpult nur dem Host zeigen
@@ -1988,13 +2054,32 @@ function render(){
         catchBtn=`<button class="catch-btn" disabled style="background:#1a1a1d;color:#666;opacity:.6">Schnappen</button>`;
       }
     }
+    // Spielleiter: kleine Buttons, um die Rolle eines Spielers manuell zu setzen
+    let roleBtns="";
+    if(isHost() && p.role!=="host"){
+      const mk=(rl,lbl,col)=> p.role===rl
+        ? `<button class="rolebtn on" style="border-color:${col};color:${col}">${lbl}</button>`
+        : `<button class="rolebtn" onclick="setRole('${p.id}','${rl}')">${lbl}</button>`;
+      roleBtns=`<span class="rolebtns">${mk("target","🎯",ROLES.target.color)}${mk("hunter","🥷",ROLES.hunter.color)}</span>`;
+    }
     return `<div class="row ${p.caught?"caught":""}">
       <div class="dot" style="background:${r.color}">${r.icon}</div>
       <span class="nm">${esc(p.name)}${p.id===me.id?" (du)":""}</span>
       <span class="tag" style="color:${r.color};border:1px solid ${r.color}55">${r.label}</span>
+      ${roleBtns}
       ${catchBtn}
     </div>`;
   }).join("");
+
+  // Info-Zeile zur Verteilung (wie viele warten/zugeteilt)
+  const di=$("distInfo");
+  if(di){
+    const pool=players.filter(p=>p.role!=="host");
+    const wait=pool.filter(p=>p.role==="pending").length;
+    const tg=pool.filter(p=>p.role==="target").length;
+    const hn=pool.filter(p=>p.role==="hunter").length;
+    di.textContent=`Im Wartebereich: ${wait} · zugeteilt: ${tg} Targets, ${hn} Hunter (gesamt ${pool.length} Spieler)`;
+  }
 
   // Sichtungs-Dropdown
   const sel=$("tipTarget"); const cur=sel.value;
@@ -2715,6 +2800,16 @@ async function autoPhase(left){
 // Spielleiter startet das Spiel: Startzeit + Endzeit setzen, Ablauf läuft dann automatisch
 window.startGame=async()=>{
   if(!isHost())return;
+  // Warnen, falls noch Spieler ohne Rolle (pending) im Wartebereich sind
+  const pending=players.filter(p=>p.role==="pending");
+  if(pending.length){
+    if(!confirm(`${pending.length} Spieler haben noch keine Rolle. Sie können dann nicht mitspielen. Erst „Rollen verteilen"? \n\nAbbrechen = zurück · OK = trotzdem starten`)) return;
+  }
+  const hasTarget=players.some(p=>p.role==="target");
+  const hasHunter=players.some(p=>p.role==="hunter");
+  if(!hasTarget || !hasHunter){
+    if(!confirm("Es gibt noch nicht sowohl Targets als auch Hunter. Trotzdem starten?")) return;
+  }
   const dur=(game.duration_min||300)*60*1000;
   const now=new Date();
   const head=(game.headstart_min||0);
