@@ -1641,13 +1641,11 @@ function onGameChange(payload){
   const prevPhase=lastPhaseForOver;
   // 1) Spielstart: Lobby -> Vorsprung (oder direkt Jagd). 3-2-1, dann beginnt der Vorsprung.
   if((g.phase==="headstart" || g.phase==="hunt") && (prevPhase==="lobby" || prevPhase==null) && g.started_at){
+    huntCdStarted=false;   // für ein neues Spiel zurücksetzen
     if(g.phase==="headstart") runCountdown(3, "Spiel startet – Vorsprung der Targets!", "LOS!");
     else runCountdown(3, "Spiel startet – die Jagd beginnt!", "LOS!");
   }
-  // 2) Vorsprung vorbei: Hunter dürfen los.
-  if(g.phase==="hunt" && prevPhase==="headstart"){
-    runCountdown(3, "Vorsprung vorbei – Hunter starten!", "JAGD!");
-  }
+  // Der Hunter-Countdown läuft synchron in den letzten 3 Sek des Vorsprungs (siehe Timer-Loop).
 
   // Phasenwechsel zu "over": Siegerehrungs-Meldung an die noch Übrigen
   if(g.phase==="over" && lastPhaseForOver!=="over"){
@@ -1729,21 +1727,65 @@ function runCountdown(seconds, label, goText){
   };
   show(n,false);
   ov.classList.remove("hidden");
+  beepShort();
   try{ if(navigator.vibrate) navigator.vibrate(60); }catch(e){}
   const tick=setInterval(()=>{
     n--;
     if(n>0){
       show(n,false);
+      beepShort();
       try{ if(navigator.vibrate) navigator.vibrate(60); }catch(e){}
     } else if(n===0){
       show(goText||"LOS!",true);
-      try{ if(navigator.vibrate) navigator.vibrate([120,60,120]); }catch(e){}
+      tyfonSound();   // Tyfon/Lufthorn-Startsignal
+      try{ if(navigator.vibrate) navigator.vibrate([200,80,200,80,300]); }catch(e){}
     } else {
       clearInterval(tick);
       ov.classList.add("hidden");
       cdActive=false;
     }
   },1000);
+}
+
+// Kurzer Piep für die Countdown-Zahlen (3-2-1)
+function beepShort(){
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext; if(!Ctx) return;
+    const ctx=new Ctx(); const now=ctx.currentTime;
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type="square"; o.frequency.value=660;
+    g.gain.setValueAtTime(0.0001,now);
+    g.gain.exponentialRampToValueAtTime(0.25,now+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+0.18);
+    o.start(now); o.stop(now+0.2);
+    setTimeout(()=>{try{ctx.close();}catch(e){}},400);
+  }catch(e){}
+}
+
+// Tyfon / Lufthorn – kräftiges, tiefes Startsignal (mehrere Obertöne)
+function tyfonSound(){
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext; if(!Ctx) return;
+    const ctx=new Ctx(); const now=ctx.currentTime;
+    const master=ctx.createGain(); master.connect(ctx.destination);
+    master.gain.setValueAtTime(0.0001,now);
+    master.gain.exponentialRampToValueAtTime(0.5,now+0.05);
+    master.gain.setValueAtTime(0.5,now+1.1);
+    master.gain.exponentialRampToValueAtTime(0.0001,now+1.5);
+    // tiefes Horn mit Obertönen (Schiffshorn/Tyfon-Charakter)
+    [110,165,220,330].forEach((f,i)=>{
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.type = i<2 ? "sawtooth" : "triangle";
+      o.frequency.setValueAtTime(f,now);
+      // leichtes Anschwellen der Tonhöhe für den typischen "Wuааah"-Effekt
+      o.frequency.linearRampToValueAtTime(f*1.03, now+0.3);
+      g.gain.value = [0.5,0.3,0.18,0.1][i];
+      o.connect(g); g.connect(master);
+      o.start(now); o.stop(now+1.5);
+    });
+    setTimeout(()=>{try{ctx.close();}catch(e){}},1800);
+  }catch(e){}
 }
 
 // Großes Eiswürfel-Modal mit Countdown. Lässt sich erst schließen, wenn die
@@ -2476,6 +2518,7 @@ function startPingLoop(){
 let lastSilenceState=false;
 let hunterRenderTick=0;
 let lastPhaseSeen=null;
+let huntCdStarted=false;   // Hunter-Countdown (letzte 3 Sek Vorsprung) schon gestartet?
 
 // Zeigt eine laufende Spezialaktion mit Restzeit an
 function updatePowerBar(){
@@ -2592,6 +2635,12 @@ function startTimer(){
 
     // GROSS: Während des Vorsprungs zeigt der Timer, wie lange der Vorsprung noch läuft
     const hsLeft=headstartLeft();
+    // Hunter-Countdown läuft SYNCHRON in den letzten 3 Sek des Vorsprungs:
+    // bei 3 Sek Restzeit starten, sodass "LOS/JAGD" genau zum Vorsprung-Ende fällt.
+    if(hsLeft!=null && hsLeft<=3 && !huntCdStarted){
+      huntCdStarted=true;
+      runCountdown(hsLeft, "Vorsprung vorbei – Hunter starten!", "JAGD!");
+    }
     if(hsLeft!=null && game.phase==="headstart"){
       $("pingLabel").style.display="";
       $("pingLabel").textContent = me.role==="hunter" ? "Start frei in (Vorsprung)" : "Vorsprung – lauf los!";
@@ -2654,11 +2703,7 @@ async function autoPhase(left){
     const fromPhase=game.phase;
     phaseWriteLock=want;                 // verhindert mehrfaches Schreiben pro Sekunde
     game.phase=want;                     // sofort lokal setzen, damit die Anzeige stimmt
-    // Countdown beim Host direkt auslösen (sein eigenes Realtime-Event käme evtl. zu spät)
-    if(want==="hunt" && fromPhase==="headstart"){
-      runCountdown(3, "Vorsprung vorbei – Hunter starten!", "JAGD!");
-      lastPhaseForOver="hunt";
-    }
+    if(want==="hunt" && fromPhase==="headstart") lastPhaseForOver="hunt";
     const patch={phase:want};
     // Beim Übergang zu "over" durch alle-gefangen die Endzeit auf jetzt setzen,
     // damit die Überlebenszeiten korrekt bis hierhin gerechnet werden.
@@ -2699,6 +2744,7 @@ window.startGame=async()=>{
   await sb.from("games").update(patch).eq("id",game.id);
   // Start-Countdown beim Host direkt auslösen (sein eigenes Realtime-Event käme evtl. zu spät)
   lastPhaseForOver=firstPhase;
+  huntCdStarted=false;
   if(firstPhase==="headstart") runCountdown(3, "Spiel startet – Vorsprung der Targets!", "LOS!");
   else runCountdown(3, "Spiel startet – die Jagd beginnt!", "LOS!");
 };
