@@ -357,11 +357,6 @@
     <input id="cfgName" placeholder="Wie heißt du?" maxlength="24" />
   </div>
   <div class="field">
-    <label>SPIELLEITER-PASSWORT</label>
-    <input id="cfgPass" type="password" placeholder="Passwort" />
-    <div style="font-size:11px;color:var(--muted);margin-top:6px;">Nur mit dem richtigen Passwort kannst du ein Spiel anlegen.</div>
-  </div>
-  <div class="field">
     <label>GESAMTDAUER (STUNDEN)</label>
     <input id="cfgHours" type="number" min="0.5" max="48" step="0.5" value="5" inputmode="decimal" />
   </div>
@@ -694,6 +689,7 @@ const SUPABASE_KEY = "sb_publishable_vAiCUSYwIxYDqyeLQ5QQaw_QL_OZb_K";     // de
    Nur wer dieses Passwort kennt, kann ein neues Spiel als Spielleiter anlegen.
    ================================================================ */
 const HOST_PASSWORD = "2026";
+let hostUnlocked=false;   // wurde das Spielleiter-Passwort schon korrekt eingegeben?
 /* ================================================================ */
 /* ================================================================
    ⬆️⬆️⬆️  AB HIER NICHTS MEHR ÄNDERN  ⬆️⬆️⬆️
@@ -1299,6 +1295,11 @@ function showErr(m){const e=$("loginErr");e.textContent=m;e.classList.remove("hi
 // "Neues Spiel erstellen" → zeigt die Konfig-Maske
 $("btnCreate").onclick=()=>{
   if(!guard())return;
+  // Passwort schon HIER abfragen, bevor die Einstellungen sichtbar werden
+  const pass=prompt("Spielleiter-Passwort eingeben:");
+  if(pass===null) return;                 // abgebrochen
+  if(pass!==HOST_PASSWORD){ alert("Falsches Spielleiter-Passwort."); return; }
+  hostUnlocked=true;
   $("login").classList.add("hidden");
   $("config").classList.remove("hidden");
   // Karte im Erstellen-Formular aufbauen (kurze Verzögerung, bis sichtbar)
@@ -1307,6 +1308,7 @@ $("btnCreate").onclick=()=>{
 $("btnCfgBack").onclick=()=>{
   $("config").classList.add("hidden");
   $("login").classList.remove("hidden");
+  hostUnlocked=false;   // beim nächsten Erstellen wieder Passwort abfragen
 };
 
 // In der Konfig-Maske: Spiel mit allen Einstellungen anlegen, als Spielleiter beitreten
@@ -1314,8 +1316,7 @@ $("btnCreateGo").onclick=async()=>{
   if(!guard())return;
   const name=$("cfgName").value.trim();
   if(!name){alert("Bitte gib deinen Namen ein.");return;}
-  const pass=$("cfgPass").value;
-  if(pass!==HOST_PASSWORD){alert("Falsches Spielleiter-Passwort.");return;}
+  if(!hostUnlocked){alert("Bitte zuerst das Spielleiter-Passwort eingeben.");return;}
   const hours=parseFloat($("cfgHours").value)||5;
   const headMin=parseInt($("cfgHead").value)||0;
   const endMin=parseInt($("cfgEnd").value)||0;
